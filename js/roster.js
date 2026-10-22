@@ -3,15 +3,22 @@
 import * as db from './db.js';
 import { enrollFromFiles, selfConsistency } from './enroll.js';
 import { log } from './log.js';
+import { dayKey } from './rules.js';
+import { now } from './clock.js';
 import * as ui from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 
 let editing = null; // { id, name, slack, createdAt, photos: [{ embedding, thumb, note, outlier }], skipped: [] }
 let onMembersChanged = async () => {};
+let onLocksChanged = async () => {};
 
-export function initRoster({ onChanged }) {
+export function initRoster({ onChanged, onLocks }) {
   onMembersChanged = onChanged;
+  onLocksChanged = onLocks;
+  $('btn-sniped-today').addEventListener('click', () => setToday('manual'));
+  $('btn-sniped-me').addEventListener('click', () => setToday('sniped-me'));
+  $('btn-reset-today').addEventListener('click', () => setToday(null));
   $('btn-add-member').addEventListener('click', () => openEditor(null));
   $('btn-member-back').addEventListener('click', showRoster);
   $('btn-member-save').addEventListener('click', save);
@@ -30,8 +37,45 @@ export function initRoster({ onChanged }) {
 }
 
 export async function showRoster() {
-  ui.renderRoster(await db.listMembers(), { onEdit: openEditor });
+  const day = dayKey(now());
+  const [members, locks, cands] = await Promise.all([db.listMembers(), db.listLocks(day), db.listCandidates(day)]);
+  const status = new Map(cands.map((c) => [c.memberId, 'caught']));
+  for (const l of locks) status.set(l.memberId, l.via);
+  ui.renderRoster(members, { onEdit: openEditor, status });
   ui.showView('roster');
+}
+
+const TODAY_TEXT = {
+  open: 'Today: not caught yet',
+  caught: '📷 Today: caught, waiting in Inbox',
+  shared: '🔒 Today: sniped (shared)',
+  saved: '🔒 Today: sniped (saved)',
+  manual: '🔒 Today: sniped (marked by you)',
+  'sniped-me': '🔒 Today: they sniped you, no countersnipe (rule 6)',
+};
+
+async function todayStatus(memberId) {
+  const day = dayKey(now());
+  const lock = (await db.listLocks(day)).find((l) => l.memberId === memberId);
+  if (lock) return lock.via;
+  return (await db.getCandidate(memberId, day))?.status === 'pending' ? 'caught' : 'open';
+}
+
+async function renderToday() {
+  $('member-today').hidden = !editing.id;
+  if (editing.id) ui.renderMemberToday(TODAY_TEXT[await todayStatus(editing.id)]);
+}
+
+// via = 'manual' | 'sniped-me' locks the member for today; null resets them (unlock + drop today's photo).
+async function setToday(via) {
+  const day = dayKey(now());
+  await db.deleteCandidatesFor([editing.id], day);
+  if (via) await db.lock([editing.id], day, via, now());
+  else await db.unlock(editing.id, day);
+  log(`${editing.name}: ${via ? `locked today (${via})` : 'reset for today'}`);
+  await onLocksChanged();
+  await renderToday();
+  ui.toast(via ? `${editing.name} won't be caught again today` : `${editing.name} reset for today`);
 }
 
 function openEditor(member) {
@@ -45,6 +89,7 @@ function openEditor(member) {
   $('member-slack').value = editing.slack;
   flagOutliers();
   render();
+  renderToday();
   ui.showView('member');
 }
 

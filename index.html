@@ -35,7 +35,39 @@
 
   <section data-view="inbox" class="panel" hidden>
     <header class="pagebar"><button data-go="watch">‹ Back</button><h2>Inbox</h2></header>
-    <p class="empty">Caught photos will appear here (Phase 5).</p>
+    <p id="inbox-deadline" class="deadline"></p>
+    <div id="inbox-grid" class="cand-grid"></div>
+    <p class="note">Each photo becomes its own Slack post with everyone in it tagged (rules 4–5). Before posting, check you weren't at the same event, class, or rehearsal (rules 1–2).</p>
+    <div id="inbox-actions" class="inbox-actions">
+      <button id="btn-share-selected" class="primary">Share</button>
+      <button id="btn-save-selected">Save</button>
+      <button id="btn-dismiss-selected" class="danger">Dismiss</button>
+    </div>
+  </section>
+
+  <section data-view="candidate" class="panel" hidden>
+    <header class="pagebar"><button id="btn-cand-back">‹ Inbox</button><h2 id="cand-title"></h2></header>
+    <img id="cand-photo" class="cand-photo" alt="Caught photo">
+    <div id="cand-info" class="cand-info"></div>
+    <fieldset>
+      <label class="field"><span>Wrong person? Change to</span><select id="cand-reassign"></select></label>
+    </fieldset>
+    <div class="settings-actions">
+      <button id="btn-cand-share" class="primary">Share</button>
+      <button id="btn-cand-dismiss" class="danger">Not them</button>
+    </div>
+  </section>
+
+  <section data-view="share" class="panel" hidden>
+    <header class="pagebar"><button id="btn-share-done">Done</button><h2 id="share-title">Share</h2></header>
+    <img id="share-photo" class="cand-photo" alt="Photo to share">
+    <p id="share-tags" class="tags"></p>
+    <p id="share-flags" class="warn"></p>
+    <div class="settings-actions">
+      <button id="btn-share-go" class="primary">Share to Slack</button>
+      <button id="btn-share-skip">Skip</button>
+    </div>
+    <p class="note">In the share sheet pick <b>Slack</b>, choose the channel, and paste: the tags are already on your clipboard.</p>
   </section>
 
   <section data-view="roster" class="panel" hidden>
@@ -55,6 +87,14 @@
       <label class="field"><span>Name</span><input id="member-name" autocomplete="off" maxlength="60"></label>
       <label class="field"><span>Slack handle</span><input id="member-slack" placeholder="@handle" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     </fieldset>
+    <div id="member-today" class="today-box" hidden>
+      <p id="member-today-status"></p>
+      <div class="settings-actions">
+        <button id="btn-sniped-today">Sniped today</button>
+        <button id="btn-sniped-me">Sniped me today</button>
+      </div>
+      <button id="btn-reset-today" class="wide">Reset today</button>
+    </div>
     <label class="button wide">Add photos<input id="member-photos" type="file" accept="image/*" multiple hidden></label>
     <p class="note">Use 3–10 clear photos of their face, ideally from different days, angles, and lighting.</p>
     <div id="member-photo-grid" class="photo-grid"></div>

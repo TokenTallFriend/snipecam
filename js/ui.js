@@ -142,7 +142,9 @@ function el(tag, props = {}, ...children) {
   return e;
 }
 
-export function renderRoster(members, { onEdit }) {
+const ROW_STATUS = { caught: '📷 caught today', shared: '🔒 sniped today', saved: '🔒 sniped today', manual: '🔒 sniped today', 'sniped-me': '🔒 sniped you today' };
+
+export function renderRoster(members, { onEdit, status = new Map() }) {
   const list = $('roster-list');
   list.replaceChildren();
   if (!members.length) {
@@ -156,6 +158,7 @@ export function renderRoster(members, { onEdit }) {
     const row = el('button', { className: 'member-row' }, avatar,
       el('span', { className: 'info' }, el('b', { textContent: m.name }),
         el('small', { textContent: detail }),
+        status.has(m.id) ? el('small', { textContent: ROW_STATUS[status.get(m.id)] }) : null,
         n < 3 ? el('small', { className: 'warn', textContent: 'Add more photos for better recognition' }) : null));
     row.addEventListener('click', () => onEdit(m));
     list.append(row);
@@ -172,9 +175,67 @@ export function renderMemberEditor(editing, { onRemove }) {
     const remove = el('button', { className: 'remove', textContent: '✕', ariaLabel: 'Remove photo' });
     remove.addEventListener('click', () => onRemove(i));
     const note = p.outlier ? "Doesn't match their other photos. Wrong person?" : p.note;
-    grid.append(el('div', { className: `photo${p.outlier ? ' outlier' : ''}` }, el('img', { src: p.thumb, alt: '' }), remove,
+    const img = p.thumb ? el('img', { src: p.thumb, alt: '' }) : el('div', { className: 'no-thumb', textContent: 'face data' });
+    grid.append(el('div', { className: `photo${p.outlier ? ' outlier' : ''}` }, img, remove,
       note ? el('small', { textContent: note }) : null));
   });
   const skipped = $('member-skipped');
   skipped.replaceChildren(...editing.skipped.map((r) => el('div', {}, el('b', { textContent: '✗ Skipped ' }), `${r.name}: ${r.note}`)));
+}
+
+// ---------- Inbox ----------
+
+const time = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+export function deadlineText(ms) {
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  return `Post by midnight · ${h ? `${h}h ` : ''}${m}m left`;
+}
+
+// cards: [{ c, url, title, others, flags }]; selected: Set of candidate ids
+export function renderInbox(cards, { selected, deadline }, { onToggle, onOpen }) {
+  $('inbox-deadline').textContent = cards.length ? deadline : '';
+  const grid = $('inbox-grid');
+  grid.replaceChildren();
+  if (!cards.length) grid.append(el('p', { className: 'empty', textContent: 'No catches yet today.' }));
+  for (const card of cards) {
+    const on = selected.has(card.c.id);
+    // Grid shows the face close-up (the full photo's center can cut the face off); detail shows the full photo.
+    const open = el('button', { className: 'open', ariaLabel: `Open ${card.title}` }, el('img', { src: card.c.thumb || card.url, alt: '' }));
+    open.addEventListener('click', () => onOpen(card.c));
+    const pick = el('button', { className: 'pick', textContent: on ? '☑' : '☐', ariaLabel: on ? 'Deselect' : 'Select' });
+    pick.addEventListener('click', () => onToggle(card.c));
+    grid.append(el('div', { className: `cand${on ? ' selected' : ''}` }, open, pick,
+      el('div', { className: 'meta' }, el('b', { textContent: card.title }),
+        card.others ? el('small', { textContent: `with ${card.others}` }) : null,
+        el('small', { textContent: ` ${time(card.c.seenAt)}` }),
+        card.flags ? el('small', { className: 'warn', textContent: ` ⚠ ${card.flags}` }) : null)));
+  }
+  const n = cards.filter((x) => selected.has(x.c.id)).length;
+  $('btn-share-selected').textContent = n ? `Share ${n}` : 'Share';
+  for (const id of ['btn-share-selected', 'btn-save-selected', 'btn-dismiss-selected']) $(id).disabled = !n;
+}
+
+export function renderCandidate(card, members) {
+  $('cand-title').textContent = card.title;
+  $('cand-photo').src = card.url;
+  $('cand-info').replaceChildren(
+    el('p', { textContent: `Seen at ${time(card.c.seenAt)} · match ${(card.c.similarity * 100).toFixed(0)}%` }),
+    card.others ? el('p', { textContent: `Also in photo: ${card.others}` }) : null,
+    card.flags ? el('p', { className: 'warn', textContent: `⚠ ${card.flags}` }) : null,
+  );
+  const sel = $('cand-reassign');
+  sel.replaceChildren(new Option('—', ''), ...members.filter((m) => m.id !== card.c.memberId).map((m) => new Option(m.name, m.id)));
+}
+
+export function renderShareStep({ card, index, total, tagLine, flagged }) {
+  $('share-title').textContent = `Photo ${index + 1} of ${total}`;
+  $('share-photo').src = card.url;
+  $('share-tags').textContent = tagLine;
+  $('share-flags').textContent = flagged ? `⚠ Already sniped today, not tagged: ${flagged}` : '';
+}
+
+export function renderMemberToday(statusText) {
+  $('member-today-status').textContent = statusText;
 }

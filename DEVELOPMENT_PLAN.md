@@ -79,7 +79,9 @@ Source: *Sniping Rules (Updated Spring 2026)*. Game logic lives in `js/rules.js`
 │   ├── tracker.js          [pure] Sighting sessions → one best frame per pass
 │   ├── capture.js          Grab/copy frame, crop, JPEG
 │   ├── enroll.js           Photos → validated embeddings + thumbnails
-│   ├── roster.js           Roster + member editor screens, export/import
+│   ├── roster.js           Roster + member editor screens, today's lock actions, export/import
+│   ├── inbox.js            Inbox grid, candidate detail, share flow (one photo per post)
+│   ├── clock.js            App clock (`?clockOffset` test hook)
 │   ├── db.js               IndexedDB: members, candidates, locks; export/import
 │   ├── share.js            Tag text, single-file share, clipboard, download
 │   └── ui.js               Views, labels, inbox, roster, settings
@@ -434,22 +436,29 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-DB-8 [B] `purgeExpired` removes yesterday's, keeps today's
 - [x] T-DB-9 [B] Candidate photo round-trips as a real JPEG
 - [x] T-DB-11 [B] `dismissCandidates` marks dismissed, drops photo; dismissed not listed
+- [x] T-DB-12 [B] `reassignCandidate` moves catch, replaces target's pending one
+- [x] T-DB-13 [B] `deleteCandidatesFor` removes only named members' catches that day
 
-### 7.13 `share.js`
+### 7.13 `share.js`, `inbox.js`
 | Function | Purpose |
 |---|---|
-| `tagText(members, flagged)` [pure] | `"🎯 Sniped @alice @bob"`; name if no handle; flagged excluded |
+| `tagText(members)` [pure] | `"🎯 Sniped @alice @bob"`; name if no handle |
 | `snipeFilename(date, names)` [pure] | `snipe-YYYY-MM-DD-HHMMSS-alice-bob.jpg` |
-| `copyText(text) → bool` | Clipboard (in tap, before share) |
-| `shareFile(blob, text) → 'shared'\|'cancelled'\|'unsupported'` | One photo per share (rule 5) |
-| `saveFiles(blobs)` | iPhone: share sheet *Save Images*. Laptop: downloads |
+| `copyText(text)` | Clipboard (started synchronously in the tap, before share) |
+| `shareFile(file, text) → 'shared'\|'cancelled'\|'downloaded'` | One photo per share (rule 5); download fallback without a share sheet |
+| `saveFiles(files)` | iPhone: share sheet *Save N Images*. Laptop: downloads |
+| `inbox.showInbox()` | Today's pending catches, new ones preselected, countdown, ⚠ flags (locked members in photo, rehearsal window) |
+| `inbox` share flow | Step per photo: tags everyone in it not yet locked; after sharing locks all tagged + deletes their other catches; later photos of tagged members skipped |
+| `inbox` detail | Full photo, "Wrong person? Change to" (`db.reassignCandidate`), "Not them" (dismiss) |
+| `roster` today actions | Status (open / caught / sniped / sniped you); **Sniped today**, **Sniped me today**, **Reset today** (unlock + drop today's photo) |
 
-- [ ] T-SHR-1 [U] `tagText` handles/no handles/flagged/empty
-- [ ] T-SHR-2 [U] `snipeFilename` format, padded, slugged
-- [ ] T-SHR-3 [M] iPhone: Share selected (3) → 3 sequential sheets → 3 Slack posts
-- [ ] T-SHR-4 [M] Tags pasteable after each share
-- [ ] T-SHR-5 [M] Laptop: Save → Downloads
-- [ ] T-SHR-6 [M] Cancel → candidate stays, not locked; sequence continues/aborts cleanly
+- [x] T-SHR-1 [U] `tagText` handles/no handles/empty
+- [x] T-SHR-2 [U] `snipeFilename` format, padded, slugged
+- [x] T-SHR-3 [B] Share 3 selected (fake iPhone sheet): 2 posts, 1 photo each, Alice's photo tags @alice @bob, Bob's own photo skipped, all 3 locked `shared`, badge clears. **Repeat on iPhone into Slack: ____**
+- [ ] T-SHR-4 [M] Tags pasteable in Slack after each share
+- [x] T-SHR-5 [B] Laptop: Share downloads `…-cara.jpg`, copies tags, locks `saved`
+- [x] T-SHR-6 [B] Cancel → candidate stays, nobody locked
+- [x] T-SHR-7 [B] Save selected → one sheet with 3 photos; locked `saved`
 
 ### 7.14 `ui.js`
 | Function | Purpose |
@@ -465,8 +474,8 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-UI-2 [U] `mapBox` 16:9 in 9:16 offsets x correctly
 - [ ] T-UI-3 [M] Labels on members only; aligned; strangers nothing
 - [x] T-UI-4 [M] Buttons ≥ 44 px; no horizontal scroll
-- [ ] T-UI-5 [M] Change name → candidate moves to new member (1/day respected)
-- [ ] T-UI-6 [M] Roster lock/unlock buttons reflect state
+- [x] T-UI-5 [B] Change name → candidate moves to new member, replacing their pending one
+- [x] T-UI-6 [B] Roster today actions update status, locks, and the running mode
 
 ### 7.15 `main.js`
 | Function | Purpose |
@@ -506,17 +515,19 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-APP-16 Export downloads `snipecam-roster-YYYY-MM-DD.snipedb.json`; import on fresh device restores member
 - [x] T-APP-17 Delete member (confirm) removes them
 - [x] T-APP-18 Enrolled member on camera → green name label, `known 1`; strangers draw nothing
+- [x] T-APP-19 Inbox lists catches, all preselected, countdown, "with Bob" on a shared photo
+- [x] T-APP-20 Dismiss selected removes catches without locking
 
 ---
 
 ## 8. End-to-End, Power & Accuracy Tests
 
-- [x] T-E2E-1 [B] Fake camera loop (A+B 6 s, empty 8 s): one pass → 1 candidate each; badge 2; dim text "2 caught · post by 12 am" (repeat on device)
-- [x] T-E2E-2 [B] Further passes → still 1 per member (repeat on device)
+- [x] T-E2E-1 [B] Fake camera loop (A+B 6 s, empty 8 s): one pass → 1 candidate each; badge 2; dim text "2 caught · post by 12 am". iPhone: caught on device ✓
+- [x] T-E2E-2 [B] Further passes → still 1 per member. iPhone: stayed at 1 on re-entry ✓
 - [x] T-E2E-3 [B] Lock member → later passes → nothing (next-day part: T-MAIN-5 + T-RUL-1)
-- [ ] T-E2E-4 [M] "Sniped today" in Roster → member ignored rest of day
+- [x] T-E2E-4 [B] "Sniped today" in Roster → tripod mode ignores member (T-UI-6 + T-MOD-3)
 - [ ] T-E2E-5 [M] 15 min strangers only → 0 candidates, nothing drawn
-- [x] T-E2E-6 [B] Two members together → candidates list both (share-locks-both part: P5)
+- [x] T-E2E-6 [B] Two members together → candidates list both; sharing one locks both and removes the other's pending (T-SHR-3)
 - [ ] T-E2E-7 [M] **Power:** 60 min, dim, unplugged → battery drop ____ % (goal ≤ 12 %); not hot
 - [ ] T-E2E-8 [M] 2-hour tripod session plugged in → no crash, candidates intact
 - [ ] T-E2E-9 [M] Max recognition distance 1× ____ m, 2× ____ m (P2 detection only, poor light: ~15–20 ft, tiles off ≈ 2×2, faces down to ~30 px)

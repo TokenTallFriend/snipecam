@@ -273,6 +273,181 @@ await check('T-MAIN-6', 'At reminderAt with photos waiting → banner', async ()
 });
 await rem.context().close();
 
+
+// --- Inbox & sharing (any engine). A fake iPhone share sheet records each share. ---
+async function seedInbox(p) {
+  await p.evaluate(async () => {
+    const db = await import('/js/db.js');
+    const { dayKey } = await import('/js/rules.js');
+    await db.clearAll();
+    const mk = (id, name, slack) => db.saveMember({ id, name, slack, embeddings: [new Array(db.EMBEDDING_SIZE).fill(0.1)], thumbs: [] });
+    await mk('a', 'Alice', 'alice');
+    await mk('b', 'Bob', 'bob');
+    await mk('c', 'Cara', '');
+    const day = dayKey(window.snipecam.now());
+    const photo = async (color) => {
+      const c = new OffscreenCanvas(320, 240);
+      const g = c.getContext('2d');
+      g.fillStyle = color;
+      g.fillRect(0, 0, 320, 240);
+      return (await c.convertToBlob({ type: 'image/jpeg' })).arrayBuffer();
+    };
+    const put = async (memberId, inFrame, ago, color) => db.putCandidate({ id: crypto.randomUUID(), memberId, day, jpeg: await photo(color),
+      thumb: '', quality: 0.5, similarity: 0.72, box: [0, 0, 50, 50], inFrame, seenAt: window.snipecam.now() - ago, status: 'pending' });
+    await put('a', ['a', 'b'], 3000, '#a33'); // Alice's photo also shows Bob
+    await put('b', ['b'], 2000, '#3a3');
+    await put('c', ['c'], 1000, '#33a');
+  });
+  await p.reload();
+  await p.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+}
+const fakeIphoneShare = () => {
+  window.__shares = [];
+  window.__shareMode = 'ok';
+  navigator.canShare = () => true;
+  navigator.share = async (data) => {
+    window.__shares.push({ n: data.files?.length ?? 0, names: (data.files ?? []).map((f) => f.name), text: data.text ?? '' });
+    if (window.__shareMode === 'cancel') throw new DOMException('cancelled', 'AbortError');
+  };
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (t) => { window.__clip = t; } } });
+};
+const dbState = (p) => p.evaluate(async () => {
+  const db = await import('/js/db.js');
+  const { dayKey } = await import('/js/rules.js');
+  const day = dayKey(window.snipecam.now());
+  return {
+    cands: (await db.listCandidates(day)).map((c) => c.memberId).sort(),
+    locks: Object.fromEntries((await db.listLocks(day)).map((l) => [l.memberId, l.via])),
+    shares: window.__shares ?? [],
+    clip: window.__clip ?? '',
+  };
+});
+
+const ip = await newPage();
+await ip.addInitScript(fakeIphoneShare);
+await ip.goto(`${server.base}/`);
+await ip.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+await seedInbox(ip);
+
+await check('T-APP-19', 'Inbox lists today\'s catches, all preselected, with post-by-midnight countdown', async () => {
+  expect((await ip.textContent('#badge')) === '3', 'badge not 3');
+  await ip.tap('[data-go="inbox"]');
+  await ip.waitForSelector('#inbox-grid .cand');
+  expect((await ip.$$('#inbox-grid .cand.selected')).length === 3, 'not all selected');
+  expect((await ip.textContent('#btn-share-selected')) === 'Share 3', 'share button label');
+  expect(/Post by midnight · .*m left/.test(await ip.textContent('#inbox-deadline')), 'deadline text');
+  expect((await ip.textContent('#inbox-grid')).includes('with Bob'), 'Alice card should mention Bob');
+  await shot(ip, '13-inbox');
+});
+
+await check('T-SHR-3', 'Share selected: one photo per post, everyone in it tagged; tagged members skipped later; all locked', async () => {
+  await ip.tap('#btn-share-selected');
+  await ip.waitForSelector('[data-view="share"]:not([hidden])');
+  expect((await ip.textContent('#share-tags')) === '🎯 Sniped @alice @bob', `tags ${await ip.textContent('#share-tags')}`);
+  await shot(ip, '14-share-step');
+  await ip.tap('#btn-share-go');
+  await ip.waitForFunction(() => document.getElementById('share-tags').textContent === '🎯 Sniped Cara');
+  await ip.tap('#btn-share-go');
+  await ip.waitForSelector('[data-view="inbox"]:not([hidden])');
+  const st = await dbState(ip);
+  expect(st.shares.length === 2, `expected 2 posts (Bob was tagged in Alice's), got ${st.shares.length}`);
+  expect(st.shares.every((x) => x.n === 1), 'each post must have exactly one photo');
+  expect(/^snipe-\d{4}-\d{2}-\d{2}-\d{6}-alice-bob\.jpg$/.test(st.shares[0].names[0]), st.shares[0].names[0]);
+  expect(st.clip === '🎯 Sniped Cara', `clipboard "${st.clip}"`);
+  expect(st.cands.length === 0, `candidates left: ${st.cands}`);
+  expect(JSON.stringify(st.locks) === JSON.stringify({ a: 'shared', b: 'shared', c: 'shared' }), JSON.stringify(st.locks));
+  expect(await ip.isHidden('#badge'), 'badge should clear');
+});
+
+await check('T-SHR-6', 'Cancelled share → photo stays in Inbox, nobody locked', async () => {
+  await seedInbox(ip);
+  await ip.evaluate(() => { window.__shares = []; window.__shareMode = 'cancel'; });
+  await ip.tap('[data-go="inbox"]');
+  await ip.waitForSelector('#inbox-grid .cand');
+  await ip.tap('#inbox-grid .cand:last-child .open'); // Alice (oldest last)
+  await ip.tap('#btn-cand-share');
+  await ip.tap('#btn-share-go');
+  await ip.waitForFunction(() => /Not shared/.test(document.getElementById('toast').textContent));
+  await ip.tap('#btn-share-done');
+  const st = await dbState(ip);
+  expect(st.cands.length === 3 && Object.keys(st.locks).length === 0, JSON.stringify(st));
+});
+
+await check('T-UI-5', 'Wrong person → change name moves the catch (replacing that member\'s pending one)', async () => {
+  await ip.evaluate(() => { window.__shareMode = 'ok'; });
+  await ip.waitForSelector('[data-view="inbox"]:not([hidden])');
+  const bobCard = await ip.$('#inbox-grid .cand:has-text("Bob"):not(:has-text("with Bob")) .open');
+  await bobCard.tap();
+  await ip.selectOption('#cand-reassign', 'c');
+  await ip.waitForFunction(() => document.getElementById('cand-title').textContent === 'Cara');
+  const st = await dbState(ip);
+  expect(JSON.stringify(st.cands) === JSON.stringify(['a', 'c']), JSON.stringify(st.cands));
+  await ip.tap('#btn-cand-back');
+});
+
+await check('T-APP-20', 'Dismiss selected ("not them") removes catches without locking anyone', async () => {
+  await ip.waitForSelector('#inbox-grid .cand');
+  await ip.tap('#inbox-grid .cand:has-text("Alice") .pick'); // deselect Alice, leaving Cara selected
+  await ip.tap('#btn-dismiss-selected');
+  await ip.waitForFunction(() => document.querySelectorAll('#inbox-grid .cand').length === 1);
+  const st = await dbState(ip);
+  expect(JSON.stringify(st.cands) === '["a"]' && Object.keys(st.locks).length === 0, JSON.stringify(st));
+});
+
+await check('T-SHR-7', 'Save selected → one share sheet with all photos ("Save N Images"); members locked as saved', async () => {
+  await seedInbox(ip);
+  await ip.evaluate(() => { window.__shares = []; });
+  await ip.tap('[data-go="inbox"]');
+  await ip.waitForSelector('#inbox-grid .cand');
+  await ip.tap('#btn-save-selected');
+  await ip.waitForFunction(() => /Saved 3 photos/.test(document.getElementById('toast').textContent));
+  const st = await dbState(ip);
+  expect(st.shares.length === 1 && st.shares[0].n === 3, JSON.stringify(st.shares));
+  expect(Object.values(st.locks).every((v) => v === 'saved') && Object.keys(st.locks).length === 3, JSON.stringify(st.locks));
+});
+
+await check('T-UI-6', 'Roster today actions: status shown; Sniped today / Sniped me / Reset today work and reach the mode', async () => {
+  await seedInbox(ip);
+  await ip.tap('[data-go="roster"]');
+  await ip.waitForSelector('.member-row');
+  expect((await ip.textContent('#roster-list')).includes('📷 caught today'), 'row status missing');
+  await ip.tap('.member-row:has-text("Bob")');
+  await ip.waitForFunction(() => /caught, waiting in Inbox/.test(document.getElementById('member-today-status').textContent));
+  await ip.tap('#btn-sniped-today');
+  await ip.waitForFunction(() => /sniped \(marked by you\)/.test(document.getElementById('member-today-status').textContent));
+  let st = await dbState(ip);
+  expect(st.locks.b === 'manual' && !st.cands.includes('b'), JSON.stringify(st));
+  expect(await ip.evaluate(() => window.snipecam.app.mode.lockedIds.includes('b')), 'tripod mode not told about the lock (T-E2E-4)');
+  await ip.tap('#btn-sniped-me');
+  await ip.waitForFunction(() => /no countersnipe/.test(document.getElementById('member-today-status').textContent));
+  await ip.tap('#btn-reset-today');
+  await ip.waitForFunction(() => /not caught yet/.test(document.getElementById('member-today-status').textContent));
+  st = await dbState(ip);
+  expect(!('b' in st.locks), JSON.stringify(st.locks));
+  expect(!(await ip.evaluate(() => window.snipecam.app.mode.lockedIds.includes('b'))), 'mode still thinks b is locked');
+  await shot(ip, '15-member-today');
+});
+await ip.context().close();
+
+// Laptop: no share sheet → photo downloads, tags copied, member locked as saved
+const lp = await newPage();
+await lp.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (t) => { window.__clip = t; } } }));
+await lp.goto(`${server.base}/`);
+await lp.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+await seedInbox(lp);
+await check('T-SHR-5', 'Laptop (no share sheet): Share downloads the photo and copies tags', async () => {
+  await lp.tap('[data-go="inbox"]');
+  await lp.waitForSelector('#inbox-grid .cand');
+  await lp.tap('#inbox-grid .cand:has-text("Cara") .open');
+  await lp.tap('#btn-cand-share');
+  const [dl] = await Promise.all([lp.waitForEvent('download'), lp.tap('#btn-share-go')]);
+  expect(/-cara\.jpg$/.test(dl.suggestedFilename()), dl.suggestedFilename());
+  await lp.waitForSelector('[data-view="inbox"]:not([hidden])');
+  const st = await dbState(lp);
+  expect(st.locks.c === 'saved' && st.clip === '🎯 Sniped Cara', JSON.stringify(st));
+});
+await lp.context().close();
+
 // --- Idle rate: no faces → drops to idleFps after idleAfterSec ---
 const idlePage = await newPage();
 await idlePage.addInitScript(() => localStorage.setItem('snipecam.settings', JSON.stringify({ idleAfterSec: 5, idleFps: 0.5 })));

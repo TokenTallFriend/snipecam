@@ -10,15 +10,14 @@ import { nextDelay, createStats } from './loop.js';
 import { matchFaces } from './matcher.js';
 import * as db from './db.js';
 import { initRoster, showRoster } from './roster.js';
+import { initInbox, showInbox } from './inbox.js';
 import { getMode } from './modes/index.js';
 import { dayKey, reminderDue } from './rules.js';
+import { now } from './clock.js';
 import * as ui from './ui.js';
 
-export const VERSION = 'P4';
+export const VERSION = 'P5';
 
-// Test hook: ?clockOffset=<ms> shifts the app's clock (to test midnight and the reminder).
-const clockOffset = Number(new URLSearchParams(location.search).get('clockOffset')) || 0;
-const now = () => Date.now() + clockOffset;
 const CLOCK_MS = 10_000;
 
 const CAMERA_KEYS = ['deviceId', 'width', 'height'];
@@ -275,9 +274,15 @@ function wireUi() {
 
   for (const btn of document.querySelectorAll('[data-go]')) {
     const go = btn.dataset.go;
-    btn.addEventListener('click', () => (go === 'settings' ? openSettings() : go === 'roster' ? showRoster() : ui.showView(go)));
+    const open = { settings: openSettings, roster: showRoster, inbox: showInbox }[go] ?? (() => ui.showView(go));
+    btn.addEventListener('click', () => open());
   }
-  initRoster({ onChanged: reloadMembers });
+  const onLocks = async () => {
+    await app.mode.onLocksChanged(ctx);
+    await refreshBadge();
+  };
+  initRoster({ onChanged: reloadMembers, onLocks });
+  initInbox({ getMembers: () => app.members, getSettings: () => app.settings, onChanged: onLocks });
 
   document.getElementById('btn-log').addEventListener('click', () => toggleLog());
   document.getElementById('btn-log-close').addEventListener('click', () => toggleLog(false));

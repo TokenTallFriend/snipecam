@@ -155,6 +155,32 @@ export async function deleteCandidates(ids) {
   await complete(t);
 }
 
+// "Wrong person": moves a candidate to another member (overwriting that member's pending one for the day).
+export async function reassignCandidate(id, newMemberId) {
+  const t = await transaction('candidates', 'readwrite');
+  const store = t.objectStore('candidates');
+  const c = await request(store.get(id));
+  if (!c) throw new Error('candidate not found');
+  const clash = await request(store.index('memberDay').get([newMemberId, c.day]));
+  if (clash && clash.id !== id) store.delete(clash.id);
+  const inFrame = [...new Set([newMemberId, ...(c.inFrame ?? []).filter((m) => m !== c.memberId)])];
+  const moved = { ...c, memberId: newMemberId, inFrame, status: 'pending' };
+  store.put(moved);
+  await complete(t);
+  return moved;
+}
+
+// Deletes today's candidates for these members (after they're tagged in a posted photo).
+export async function deleteCandidatesFor(memberIds, day) {
+  const t = await transaction('candidates', 'readwrite');
+  const index = t.objectStore('candidates').index('memberDay');
+  for (const memberId of memberIds) {
+    const c = await request(index.get([memberId, day]));
+    if (c) t.objectStore('candidates').delete(c.id);
+  }
+  await complete(t);
+}
+
 // "Not them": keeps the record (so the slot stays known) but marks it dismissed; a new sighting may replace it.
 export async function dismissCandidates(ids) {
   const t = await transaction('candidates', 'readwrite');

@@ -139,6 +139,7 @@ fieldset .field:last-of-type { border-radius: 0 0 10px 10px; border-bottom: 0; }
 .photo { position: relative; border-radius: 10px; overflow: hidden; background: var(--surface); }
 .photo img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
 .photo.outlier { outline: 3px solid #fbbf24; }
+.photo .no-thumb { display: flex; align-items: center; justify-content: center; aspect-ratio: 1; color: var(--muted); font-size: 12px; }
 .photo .remove {
   position: absolute; top: 0; right: 0; padding: 0;
   border: 0; border-radius: 0 0 0 12px; background: rgba(0,0,0,0.65); font-size: 16px;
@@ -147,6 +148,35 @@ fieldset .field:last-of-type { border-radius: 0 0 10px 10px; border-bottom: 0; }
 .skipped { margin-top: 12px; font-size: 13px; }
 .skipped div { padding: 4px 0; color: var(--muted); }
 .skipped b { color: var(--danger); font-weight: 600; }
+
+/* Inbox */
+.deadline { margin: 12px 0 0; font-weight: 600; color: #fbbf24; }
+.cand-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; padding-bottom: 80px; }
+.cand { position: relative; border-radius: 12px; overflow: hidden; background: var(--surface); outline: 3px solid transparent; }
+.cand.selected { outline-color: var(--accent); }
+.cand .open { display: block; width: 100%; padding: 0; border: 0; border-radius: 0; background: none; }
+.cand img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.cand .pick {
+  position: absolute; top: 0; left: 0; padding: 0; border: 0; border-radius: 0 0 12px 0;
+  background: rgba(0,0,0,0.6); font-size: 20px;
+}
+.cand .meta { padding: 6px 8px; font-size: 13px; line-height: 1.35; }
+.cand .meta b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cand .meta small { color: var(--muted); }
+.inbox-actions {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 11; display: flex; gap: 8px;
+  padding: 10px calc(var(--safe-right) + 16px) calc(var(--safe-bottom) + 10px) calc(var(--safe-left) + 16px);
+  background: var(--panel); border-top: 1px solid var(--border);
+}
+.inbox-actions button { flex: 1; }
+.cand-photo { display: block; width: 100%; margin-top: 12px; border-radius: 12px; background: #000; }
+.cand-info { margin: 10px 0; }
+.cand-info p { margin: 4px 0; }
+.tags { font-size: 18px; font-weight: 600; margin: 12px 0 4px; word-break: break-word; }
+.today-box { margin-top: 16px; padding: 12px; border-radius: 12px; background: var(--surface); }
+.today-box p { margin: 0 0 4px; }
+.today-box .settings-actions { margin-top: 8px; }
+.today-box .wide { margin-top: 8px; }
 
 /* Dim overlay */
 #dim {

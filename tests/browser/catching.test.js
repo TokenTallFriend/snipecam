@@ -160,3 +160,24 @@ test('T-MOD-8', 'stop mid-sighting flushes it into a candidate', async () => {
   await tripod.stop(ctx);
   assert.equal(ctx.candidates.length, 1);
 });
+
+test('T-DB-12', 'reassignCandidate moves a catch to another member, replacing their pending one', async () => {
+  await db.clearAll();
+  const a = await db.putCandidate(cand('a', TODAY, { inFrame: ['a', 'x'] }));
+  await db.putCandidate(cand('b', TODAY));
+  const moved = await db.reassignCandidate(a.id, 'b');
+  assert.equal(moved.memberId, 'b');
+  assert.deepEqual([...moved.inFrame].sort(), ['b', 'x']);
+  const list = await db.listCandidates(TODAY);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].id, a.id);
+});
+
+test('T-DB-13', 'deleteCandidatesFor removes only the named members\' catches for that day', async () => {
+  await db.clearAll();
+  await db.putCandidate(cand('a', TODAY));
+  await db.putCandidate(cand('b', TODAY));
+  await db.putCandidate(cand('a', '2026-10-22'));
+  await db.deleteCandidatesFor(['a', 'zz'], TODAY);
+  assert.deepEqual((await db.listCandidates()).map((c) => `${c.memberId}@${c.day}`).sort(), ['a@2026-10-22', 'b@2026-10-21']);
+});
