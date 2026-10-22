@@ -16,7 +16,8 @@ On-device, in-browser face recognition for the club sniping game. **Passive (tri
 | Processing | 100% on-device. No video leaves the device. |
 | Power | Battery over latency. 2 fps default (500 ms), 0.5 fps idle. Dim mode (black screen). |
 | Stack | Plain HTML/CSS/ES modules. No framework, no build step. |
-| Face library | `@vladmandic/human` (detector + mesh + `faceres` 1024-d embedding), jsDelivr, **exact version pinned** (confirm in P2). |
+| Face library | `@vladmandic/human@3.3.6` (detector + mesh + `faceres` 1024-d embedding) from jsDelivr; models cached in IndexedDB after first load. |
+| Distant faces | Detector shrinks input to 256 px → faces < ~110 px in a 1080p frame are missed (~2 m on the 1× lens). Fix: **two-stage detection**: (1) cheap face-finding on full frame + n×n overlapping tiles (default 2×2), merge duplicates; (2) mesh + embedding once per face on an enlarged crop. Empty scenes cost only stage 1. |
 | Backend | `webgpu`, fallback `webgl`. |
 | Hosting | GitHub Pages (public repo, HTTPS). Dev on `localhost`. |
 | Storage | IndexedDB per device: roster, candidates (JPEG), daily lock log. Settings in localStorage. **No face data in the repo.** |
@@ -62,6 +63,7 @@ Source: *Sniping Rules (Updated Spring 2026)*. Game logic lives in `js/rules.js`
 ├── css/style.css
 ├── js/
 │   ├── main.js             Bootstrap, state machine, generic watch loop, mode host
+│   ├── loop.js             [pure] Adaptive tick delay, rolling fps/detect-time stats
 │   ├── modes/
 │   │   ├── index.js        Mode registry: { tripod }
 │   │   └── tripod.js       Tripod mode: tracker + rules → candidates
@@ -86,7 +88,12 @@ Source: *Sniping Rules (Updated Spring 2026)*. Game logic lives in `js/rules.js`
 │   ├── unit/               *.test.js for [pure] modules
 │   ├── browser/            *.test.js needing DOM/camera/IndexedDB/Human
 │   └── fixtures/           GITIGNORED. people/<name>/*.jpg, blank.png, group.jpg
-└── tools/serve.sh          python3 -m http.server 8000
+└── tools/
+    ├── serve.sh            python3 -m http.server 8000
+    ├── fetch-fixtures.sh   Sample faces (Human repo, MIT) + fake-camera video → tests/fixtures/
+    ├── testlib.mjs         Playwright helpers (throwaway server, engines with fake camera)
+    ├── test-browser.mjs    Runs tests/browser.html in Chromium/Firefox/WebKit
+    └── test-app.mjs        Drives index.html end to end with a fake camera
 ```
 
 **Rule:** `[pure]` modules never touch DOM/`window` at import, so Node can test them.
@@ -111,9 +118,9 @@ Lock      { memberId, day, at, via: 'shared'|'saved'|'manual'|'sniped-me' }
 
 Settings  { mode: 'tripod', processFps: 2, idleFps: 0.5, idleAfterSec: 60,
             threshold: 0.55, margin: 0.05, minHits: 2, gapSec: 5, maxDetected: 10,
-            minFacePx: 40, minCandidateFacePx: 60, facingMode: 'environment',
+            minFacePx: 40, minCandidateFacePx: 60, tiles: 2 /* 1|2|3 */, deviceId: null /* null = default rear */,
             width: 1920, height: 1080, zoom: 1 /* 1|1.5|2 */, alert: 'off' /* off|sound */,
-            reminderAt: '23:00', showLabels: true, backend: 'webgpu', deviceId: null,
+            reminderAt: '23:00', showLabels: true, backend: 'webgpu', debugFaces: false,
             rehearsals: [] /* P6: [{weekday, start:'19:00', end:'21:00'}] */ }
 ```
 
@@ -285,11 +292,11 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | `stopCamera()` | Stop tracks |
 | `listCameras()` | Video inputs |
 
-- [ ] T-CAM-1 [M] Laptop: webcam shows; actual resolution in status
-- [ ] T-CAM-2 [M] iPhone: rear camera; ≥ 1920×1080
-- [ ] T-CAM-3 [M] Stop → camera indicator off
+- [x] T-CAM-1 [M] Laptop: webcam shows; actual resolution in status
+- [x] T-CAM-2 [M] iPhone: rear camera; ≥ 1920×1080
+- [x] T-CAM-3 [M] Stop → camera indicator off
 - [x] T-CAM-4 [B] Permission denied → clear message, no crash (automated in `test:app`)
-- [ ] T-CAM-5 [M] Camera picker switches devices
+- [x] T-CAM-5 [M] Camera picker switches devices
 - [x] T-CAM-6 [U] `cameraErrorMessage` maps each error name to readable text
 
 ### 7.6 `device.js`
@@ -300,26 +307,42 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | `beep(freq=880, ms=150)` | Oscillator beep |
 | `setDim(on, statusText)` | Black overlay; video keeps playing (runtime state, not a setting) |
 
-- [ ] T-DEV-1 [M] iPhone Home Screen app: no auto-lock over 30 min (Auto-Lock set to 30 s to prove it)
-- [ ] T-DEV-2 [M] Same with Low Power Mode (record: ____)
-- [ ] T-DEV-3 [M] Wake lock restored after app switch + Resume
+- [x] T-DEV-1 [M] iPhone Home Screen app: no auto-lock over 30 min (Auto-Lock set to 30 s to prove it)
+- [x] T-DEV-2 [M] Same with Low Power Mode (record: passed)
+- [x] T-DEV-3 [M] Wake lock restored after app switch + Resume
 - [ ] T-DEV-4 [M] Dim mode: detection still runs (candidate created)
 - [ ] T-DEV-5 [M] Beep audible when `alert: sound`; silent when off
 
-### 7.7 `detector.js`
+### 7.7 `detector.js`, `loop.js`
 | Function | Purpose |
 |---|---|
-| `initDetector({backend, maxDetected, onProgress}) → backendUsed` | Pinned Human; face detector+mesh+description only; warm up; webgpu→webgl fallback |
-| `detect(input) → Face[]` | Boxes in source px; drop < `minFacePx` |
+| `initDetector({backend, maxDetected, minFacePx, onProgress}) → backendUsed` | Pinned Human; face detector+mesh+description only; warm up; webgpu→webgl fallback |
+| `detect(bitmap, {tiles}) → Face[]` | Stage 1 find (full frame + tiles, mesh/embedding off) → `dedupe` → stage 2 describe each face on a 2× crop |
+| `humanConfig(opts)` [pure] | Config object (only face modules on) |
+| `toFaces(results, minFacePx)` [pure] | Human results → `Face[]`; drop small faces |
+| `tileRects(W, H, n)` [pure] | n×n grid, tiles 25% oversize so seam faces are whole in one |
+| `dedupe(faces)` [pure] | Overlap > 50% of smaller box → same face; keep larger box |
+| `expandRect(box, factor, W, H)` [pure] | Square crop around a face, clamped |
 | `quality(face, similarity, frameW, frameH)` [pure] | `score × similarity × sqrt(area/frameArea)` |
+| `loop.nextDelay(...)` / `loop.createStats()` [pure] | Adaptive fps (idle after `idleAfterSec`); rolling fps + detect ms |
+| `capture.cropRect` [pure] / `capture.grabFrame` | Zoom center-crop; frame → ImageBitmap |
 
-- [ ] T-DET-1 [B] init resolves; `webgpu` or `webgl`
-- [ ] T-DET-2 [B] `blank.png` → `[]`
-- [ ] T-DET-3 [B] `group.jpg` → ≥ expected faces; embedding length 1024
-- [ ] T-DET-4 [B] Same-person similarity > different-person
-- [ ] T-DET-5 [U] `quality` increases with size, score, similarity
-- [ ] T-DET-6 [B] `bench.html`: mean detect ≤ 250 ms on iPhone (record: iPhone ____ / laptop ____)
-- [ ] T-DET-7 [M] Forced webgpu failure → webgl fallback, logged
+- [x] T-DET-1 [B] init resolves; `webgpu` or `webgl`
+- [x] T-DET-2 [B] `blank.png` → `[]`
+- [x] T-DET-3 [B] `group.jpg` 2×2 → ≥ 13 faces (baseline 13 of ~16); embeddings 1024-d
+- [x] T-DET-4 [B] Same-person similarity > different-person
+- [x] T-DET-5 [U] `quality` increases with size, score, similarity
+- [ ] T-DET-6 [B/M] Detect time — `tests/bench.html` on iPhone: tiles off ____ ms, 2×2 ____ ms, 3×3 ____ ms (target 2×2 ≤ 250 ms)
+- [x] T-DET-7 [B] Without WebGPU → webgl fallback (Firefox/WebKit headless)
+- [x] T-DET-8 [U] `humanConfig`: only face modules enabled; version pinned
+- [x] T-DET-9 [U] `toFaces` maps, rounds, filters, converts embeddings
+- [x] T-DET-10 [U] `tileRects` covers frame; tiles overlap
+- [x] T-DET-11 [U] `dedupe` merges partial duplicates; keeps neighbors
+- [x] T-DET-12 [B] Distant group (50% in 1080p): 2×2 finds more than full frame (baseline full 3 → 2×2 10)
+- [x] T-DET-13 [B] Tiled detect time recorded (headless software GL; informational)
+- [x] T-DET-14 [U] `expandRect` centered, clamped, capped
+- [x] T-LOOP-1..4 [U] Full rate with faces; idle rate after `idleAfterSec`; delay ≥ 0; rolling stats
+- [x] T-CAP-3 [U] `cropRect` zoom 2 → centered half-size crop
 
 ### 7.8 `matcher.js` [pure]
 | Function | Purpose |
@@ -361,7 +384,6 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 
 - [ ] T-CAP-1 [B] JPEG type, size > 0, dims preserved
 - [ ] T-CAP-2 [B] Edge box crop OK; 96×96
-- [ ] T-CAP-3 [B] zoom 2 → half dims
 - [ ] T-CAP-4 [B] copy survives closing original
 
 ### 7.11 `enroll.js`
@@ -426,7 +448,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-UI-1 [U] `mapBox` identity when aspects match
 - [x] T-UI-2 [U] `mapBox` 16:9 in 9:16 offsets x correctly
 - [ ] T-UI-3 [M] Labels on members only; aligned; strangers nothing
-- [ ] T-UI-4 [M] Buttons ≥ 44 px; no horizontal scroll
+- [x] T-UI-4 [M] Buttons ≥ 44 px; no horizontal scroll
 - [ ] T-UI-5 [M] Change name → candidate moves to new member (1/day respected)
 - [ ] T-UI-6 [M] Roster lock/unlock buttons reflect state
 
@@ -443,7 +465,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | `reloadMembers()` / `onVisibility()` | Roster refresh; PAUSED/Resume |
 
 - [ ] T-MAIN-1 [M] Boot on iPhone → READY (record: ____ s cold / ____ s warm)
-- [ ] T-MAIN-2 [M] Loop never overlaps; idle fps after idleAfterSec; back up on face
+- [x] T-MAIN-2 [B] Loop never overlaps; idle fps after idleAfterSec (automated: T-MAIN-2, T-APP-13)
 - [ ] T-MAIN-3 [M] Background → PAUSED → Resume; candidates intact
 - [ ] T-MAIN-4 [M] Stop mid-session → candidate still produced
 - [ ] T-MAIN-5 [M] Clock faked to 23:59:30 → candidates purged after midnight; locks reset
@@ -451,7 +473,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 
 ### 7.16 App-level automated checks (`npm run test:app`, Playwright, fake camera, iPhone-size viewport)
 - [x] T-APP-1 Boots to Ready with no errors
-- [x] T-APP-2 Start → Watching; live video; resolution in status
+- [x] T-APP-2 Start → Watching; live video; resolution in log
 - [x] T-APP-3 Dim covers screen; video keeps playing underneath; tap wakes
 - [x] T-APP-4 Settings form renders all groups; edits validated + persisted
 - [x] T-APP-5 Camera setting change restarts camera, keeps watching
@@ -460,6 +482,9 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-APP-8 Settings persist across reload; Reset restores defaults
 - [x] T-APP-9 No horizontal scroll in any view at 393 px width
 - [x] T-APP-10 All visible buttons ≥ 44 px
+- [x] T-APP-11 Watch loop runs; status shows fps, detect ms, faces, backend
+- [x] T-APP-12 Face video as camera (Chromium) → detected; debug overlay box drawn and aligned
+- [x] T-APP-13 No faces → idle rate after `idleAfterSec`
 
 ---
 

@@ -7,8 +7,7 @@ export const MODES = ['tripod'];
 
 export const FIELDS = [
   // Camera
-  { key: 'facingMode', group: 'Camera', label: 'Camera', type: 'select', options: [['environment', 'Rear'], ['user', 'Front']], default: 'environment' },
-  { key: 'deviceId', group: 'Camera', label: 'Device', type: 'camera', default: null },
+  { key: 'deviceId', group: 'Camera', label: 'Camera', type: 'camera', default: null }, // null = default rear camera
   { key: 'width', group: 'Camera', label: 'Width (px)', type: 'number', min: 320, max: 3840, step: 1, int: true, default: 1920 },
   { key: 'height', group: 'Camera', label: 'Height (px)', type: 'number', min: 240, max: 2160, step: 1, int: true, default: 1080 },
   { key: 'zoom', group: 'Camera', label: 'Zoom', type: 'select', options: [[1, '1×'], [1.5, '1.5×'], [2, '2×']], default: 1 },
@@ -19,6 +18,7 @@ export const FIELDS = [
   // Recognition
   { key: 'threshold', group: 'Recognition', label: 'Match threshold', type: 'number', min: 0, max: 1, step: 0.01, default: 0.55 },
   { key: 'margin', group: 'Recognition', label: 'Margin over runner-up', type: 'number', min: 0, max: 0.5, step: 0.01, default: 0.05 },
+  { key: 'tiles', group: 'Recognition', label: 'Distant-face scan', type: 'select', options: [[1, 'Off'], [2, '2×2 tiles'], [3, '3×3 tiles']], default: 2 },
   { key: 'maxDetected', group: 'Recognition', label: 'Max faces per frame', type: 'number', min: 1, max: 20, step: 1, int: true, default: 10 },
   { key: 'minFacePx', group: 'Recognition', label: 'Min face size (px)', type: 'number', min: 10, max: 500, step: 1, int: true, default: 40 },
   { key: 'minCandidateFacePx', group: 'Recognition', label: 'Min face size to keep photo (px)', type: 'number', min: 10, max: 500, step: 1, int: true, default: 60 },
@@ -32,6 +32,7 @@ export const FIELDS = [
   // Advanced
   { key: 'mode', group: 'Advanced', label: 'Mode', type: 'select', options: MODES.map((m) => [m, m[0].toUpperCase() + m.slice(1)]), default: 'tripod' },
   { key: 'backend', group: 'Advanced', label: 'Compute backend', type: 'select', options: [['webgpu', 'WebGPU'], ['webgl', 'WebGL']], default: 'webgpu' },
+  { key: 'debugFaces', group: 'Advanced', label: 'Show all detected faces (debug)', type: 'checkbox', default: false },
 ];
 
 export const DEFAULTS = Object.freeze({

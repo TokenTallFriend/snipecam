@@ -56,9 +56,10 @@ button.primary.stop { background: var(--danger); border-color: var(--danger); co
 }
 .status { display: flex; flex-direction: column; min-width: 0; }
 #status-state { font-weight: 600; }
-#status-detail { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status { text-shadow: 0 1px 3px #000, 0 0 2px #000; }
+#status-detail { font-size: 13px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topbar nav { display: flex; gap: 6px; flex-shrink: 0; }
-.topbar nav button { position: relative; padding: 0; background: rgba(28,28,30,0.8); }
+.topbar nav button { position: relative; padding: 0; background: rgba(28,28,30,0.8); font-size: 22px; line-height: 1; }
 .badge {
   position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 4px;
   border-radius: 9px; background: var(--danger); color: #fff; font-size: 11px; line-height: 18px;

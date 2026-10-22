@@ -12,6 +12,37 @@ export function mapBox([x, y, w, h], srcW, srcH, viewW, viewH) {
   return [x * scale + offX, y * scale + offY, w * scale, h * scale];
 }
 
+// Draws face boxes on the overlay canvas. `crop` is where the processed frame sits within the video.
+// P2: only drawn in debug mode (strangers are never shown in normal use).
+export function renderFaces(canvas, faces, { videoW, videoH, crop, debug = false }) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  if (!debug || !videoW) return;
+  ctx.lineWidth = 2;
+  ctx.font = '13px system-ui, sans-serif';
+  for (const f of faces) {
+    const [x, y, bw, bh] = mapBox([f.box[0] + crop.x, f.box[1] + crop.y, f.box[2], f.box[3]], videoW, videoH, w, h);
+    ctx.strokeStyle = 'rgba(200,200,200,0.9)';
+    ctx.strokeRect(x, y, bw, bh);
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(x, y - 18, 64, 18);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(`${f.box[2]}px ${f.score.toFixed(2)}`, x + 3, y - 5);
+  }
+}
+
+export function clearOverlay(canvas) {
+  canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+}
+
 // Views other than 'watch' are full-screen panels drawn over it, so the video never stops rendering.
 export function showView(name) {
   for (const el of document.querySelectorAll('[data-view]')) {
@@ -70,7 +101,7 @@ function makeInput(f, value, cameras) {
   if (f.type === 'select' || f.type === 'camera') {
     const sel = document.createElement('select');
     const options = f.type === 'camera'
-      ? [['', 'Default'], ...cameras.map((c, i) => [c.deviceId, c.label || `Camera ${i + 1}`])]
+      ? [['', 'Default (rear)'], ...cameras.map((c, i) => [c.deviceId, c.label || `Camera ${i + 1}`])]
       : f.options;
     for (const [val, label] of options) sel.append(new Option(label, val, false, String(val) === String(value ?? '')));
     return sel;
