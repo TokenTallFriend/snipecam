@@ -2,7 +2,9 @@
 // Usage: node tools/test-app.mjs [chromium|firefox]   (default: chromium)
 // Screenshots go to $SHOT_DIR if set.
 
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright';
 import { startServer, launch } from './testlib.mjs';
 
 const engine = process.argv[2] ?? 'chromium';
@@ -42,7 +44,7 @@ const FIX = fileURLToPath(new URL('../tests/fixtures/', import.meta.url));
 
 // Adds a member through the Roster UI. Returns the toast text.
 async function addMember(p, name, slack, photos) {
-  await p.tap('[data-go="roster"]');
+  if (!(await p.isVisible('[data-view="roster"]'))) await p.tap('[data-go="roster"]');
   await p.waitForSelector('[data-view="roster"]:not([hidden])');
   await p.tap('#btn-add-member');
   await p.fill('#member-name', name);
@@ -229,6 +231,48 @@ await check('T-APP-17', 'Delete member (after confirm) removes them', async () =
 });
 await rp.context().close();
 
+
+// --- Clock: midnight purge (rule 9) and reminder, using the ?clockOffset test hook ---
+function offsetTo(h, m, sec) {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, m, sec).getTime() - Date.now();
+}
+async function addPendingCandidate(p) {
+  await p.evaluate(async () => {
+    const db = await import('/js/db.js');
+    const { dayKey } = await import('/js/rules.js');
+    await db.putCandidate({ id: crypto.randomUUID(), memberId: 'zz', day: dayKey(window.snipecam.now()), jpeg: new ArrayBuffer(4),
+      thumb: '', quality: 1, similarity: 0.8, box: [0, 0, 1, 1], inFrame: ['zz'], seenAt: window.snipecam.now(), status: 'pending' });
+  });
+}
+const mid = await newPage();
+await mid.goto(`${server.base}/?clockOffset=${offsetTo(23, 59, 48)}`);
+await check('T-MAIN-5', 'At midnight, unposted photos are deleted and the badge clears', async () => {
+  await mid.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+  await addPendingCandidate(mid);
+  await mid.reload();
+  await mid.waitForFunction(() => document.getElementById('badge').textContent === '1' && !document.getElementById('badge').hidden);
+  await mid.waitForFunction(() => document.getElementById('badge').hidden, null, { timeout: 40000 });
+  const left = await mid.evaluate(async () => (await (await import('/js/db.js')).listCandidates()).length);
+  expect(left === 0, `${left} candidates left after midnight`);
+  expect(/New day .*deleted 1/.test(await mid.textContent('#log .log-body')), 'rollover not logged');
+});
+await mid.context().close();
+
+const rem = await newPage();
+await rem.goto(`${server.base}/?clockOffset=${offsetTo(23, 0, 5)}`);
+await check('T-MAIN-6', 'At reminderAt with photos waiting → banner', async () => {
+  await rem.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+  await addPendingCandidate(rem);
+  await rem.reload();
+  await rem.waitForSelector('#banner:not([hidden])', { timeout: 30000 });
+  expect(/1 snipe waiting/.test(await rem.textContent('#banner')), await rem.textContent('#banner'));
+  await shot(rem, '11-reminder');
+  await rem.tap('#banner');
+  expect(!(await rem.isVisible('#banner')), 'banner did not dismiss');
+});
+await rem.context().close();
+
 // --- Idle rate: no faces → drops to idleFps after idleAfterSec ---
 const idlePage = await newPage();
 await idlePage.addInitScript(() => localStorage.setItem('snipecam.settings', JSON.stringify({ idleAfterSec: 5, idleFps: 0.5 })));
@@ -242,8 +286,6 @@ await idlePage.context().close();
 await browser.close();
 
 // --- Real face as the camera (Chromium only: plays a video file as the fake camera) ---
-import { existsSync } from 'node:fs';
-import { chromium } from 'playwright';
 if (engine === 'chromium' && existsSync(faceCam)) {
   const faceBrowser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${faceCam}`] });
   const ctx = await faceBrowser.newContext({ ...iphone, permissions: ['camera'] });
@@ -274,6 +316,75 @@ if (engine === 'chromium' && existsSync(faceCam)) {
   await faceBrowser.close();
 } else if (engine === 'chromium') {
   results.push({ id: 'T-APP-12', name: 'Face on camera (skipped: run tools/fetch-fixtures.sh)', pass: true });
+}
+
+// --- Catching end to end (Chromium): camera loops [A and B for 6 s] [empty for 8 s] ---
+const pairCam = fileURLToPath(new URL('../tests/fixtures/pair-cam.y4m', import.meta.url));
+if (engine === 'chromium' && existsSync(pairCam)) {
+  const pb = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${pairCam}`] });
+  const pctx = await pb.newContext({ ...iphone, permissions: ['camera'] });
+  const pp = await pctx.newPage();
+  pp.setDefaultTimeout(60000);
+  pp.on('pageerror', (e) => console.log('pageerror', e.message));
+  await pp.addInitScript(() => localStorage.setItem('snipecam.settings', JSON.stringify({ gapSec: 3, minHits: 2 })));
+  await pp.goto(`${server.base}/`);
+  await pp.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+  await addMember(pp, 'Person A', 'persona', ['people/emotions-a/2.jpg', 'people/emotions-a/3.jpg', 'people/emotions-a/4.jpg']);
+  await addMember(pp, 'Person B', 'personb', ['people/emotions-b/1.jpg', 'people/emotions-b/2.jpg', 'people/emotions-b/3.jpg']);
+  await pp.tap('.panel:not([hidden]) [data-go="watch"]');
+  const candidates = () => pp.evaluate(async () => (await (await import('/js/db.js')).listCandidates()).map((c) => ({ name: c.memberId, inFrame: c.inFrame.length, kb: Math.round(c.jpeg.byteLength / 1024) })));
+  const loopMs = 14000;
+
+  await check('T-E2E-1', 'Two members pass once → one candidate each, both photos list both people; badge 2', async () => {
+    await pp.tap('#btn-start');
+    await pp.waitForFunction(() => document.getElementById('status-state').textContent === 'Watching');
+    await pp.tap('#btn-dim'); // T-DEV-4: everything below runs under dim
+    await pp.waitForFunction(() => document.getElementById('badge').textContent === '2', null, { timeout: 3 * loopMs });
+    const c = await candidates();
+    expect(c.length === 2 && c.every((x) => x.inFrame === 2 && x.kb > 10), JSON.stringify(c));
+    expect(/2 caught · post by 12 am/.test(await pp.textContent('#dim-text')), `dim text: ${await pp.textContent('#dim-text')}`);
+    await shot(pp, '12-dim-caught');
+  });
+
+  await check('T-E2E-2', 'More passes the same day → still exactly one candidate per member', async () => {
+    await pp.waitForTimeout(2 * loopMs);
+    const c = await candidates();
+    expect(c.length === 2, JSON.stringify(c));
+  });
+
+  await check('T-E2E-3', 'Member locked (e.g. shared) → no new candidate or alert for them that day', async () => {
+    await pp.evaluate(async () => {
+      const db = await import('/js/db.js');
+      const { dayKey } = await import('/js/rules.js');
+      const { app, ctx, now } = window.snipecam;
+      const a = app.members.find((m) => m.name === 'Person A');
+      const day = dayKey(now());
+      await db.lock([a.id], day, 'shared');
+      await db.deleteCandidates([(await db.getCandidate(a.id, day)).id]);
+      await app.mode.onLocksChanged(ctx);
+    });
+    await pp.waitForTimeout(2 * loopMs);
+    const c = await candidates();
+    expect(c.length === 1, `expected only B's candidate, got ${JSON.stringify(c)}`);
+  });
+
+  await check('T-MAIN-4', 'Stop mid-sighting → that sighting still becomes a candidate', async () => {
+    await pp.tap('#dim');
+    await pp.evaluate(async () => {
+      const db = await import('/js/db.js');
+      await db.deleteCandidates((await db.listCandidates()).map((c) => c.id));
+    });
+    // Wait until B is being seen, then stop right away
+    await pp.waitForFunction(() => /known [12]/.test(document.getElementById('status-detail').textContent), null, { timeout: 2 * loopMs });
+    await pp.waitForFunction(() => /Sighting confirmed: Person B/.test(document.getElementById('log').textContent.split('Stop').pop()), null, { timeout: loopMs });
+    await pp.tap('#btn-start'); // Stop
+    await pp.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+    const c = await candidates();
+    expect(c.length === 1, JSON.stringify(c));
+  });
+  await pb.close();
+} else if (engine === 'chromium') {
+  results.push({ id: 'T-E2E-1..3', name: 'Catching end to end (skipped: run tools/fetch-fixtures.sh)', pass: true });
 }
 
 server.stop();

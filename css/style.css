@@ -178,6 +178,13 @@ fieldset .field:last-of-type { border-radius: 0 0 10px 10px; border-bottom: 0; }
 .log-warn { color: #fbbf24; }
 .log-error { color: #f87171; }
 
+/* Banner (reminder): above everything, including dim */
+#banner {
+  position: fixed; left: 12px; right: 12px; top: calc(var(--safe-top) + 64px); z-index: 40;
+  margin: 0 auto; max-width: 480px; padding: 14px 16px; border-radius: 12px;
+  background: #b45309; color: #fff; font-weight: 600; text-align: center; cursor: pointer;
+}
+
 /* Toast */
 #toast {
   position: fixed; left: 16px; right: 16px; bottom: calc(var(--safe-bottom) + 96px); z-index: 25;

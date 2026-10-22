@@ -35,7 +35,7 @@ export function renderFaces(canvas, results, { videoW, videoH, crop, debug = fal
     if (!isMember && !debug) continue;
     const [x, y, bw, bh] = mapBox([face.box[0] + crop.x, face.box[1] + crop.y, face.box[2], face.box[3]], videoW, videoH, w, h);
     const label = isMember
-      ? match.member.name
+      ? debug ? `${match.member.name} ${match.similarity.toFixed(2)}` : match.member.name
       : debug ? `${top ? `${top.member.name}? ${top.similarity.toFixed(2)}` : 'face'} · ${face.box[2]}px` : '';
     const color = isMember ? '#22c55e' : 'rgba(200,200,200,0.9)';
     ctx.strokeStyle = color;
@@ -71,6 +71,14 @@ export function toast(msg, ms = 3000) {
   el.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.hidden = true; }, ms);
+}
+
+// Persistent message at the top; tap to dismiss.
+export function banner(msg) {
+  const el = $('banner');
+  el.textContent = msg;
+  el.hidden = false;
+  el.onclick = () => { el.hidden = true; };
 }
 
 export function progress(pct, label = '') {

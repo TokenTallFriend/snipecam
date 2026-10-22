@@ -3,22 +3,29 @@
 import { loadSettings, saveSettings, validate, DEFAULTS } from './settings.js';
 import { initLog, log, toggleLog } from './log.js';
 import { startCamera, stopCamera, listCameras, cameraErrorMessage } from './camera.js';
-import { keepAwake, unlockAudio, setDim } from './device.js';
+import { keepAwake, unlockAudio, setDim, isDim, beep } from './device.js';
 import { initDetector, detect } from './detector.js';
 import { grabFrame } from './capture.js';
 import { nextDelay, createStats } from './loop.js';
 import { matchFaces } from './matcher.js';
-import { openDb, listMembers } from './db.js';
+import * as db from './db.js';
 import { initRoster, showRoster } from './roster.js';
+import { getMode } from './modes/index.js';
+import { dayKey, reminderDue } from './rules.js';
 import * as ui from './ui.js';
 
-export const VERSION = 'P3';
+export const VERSION = 'P4';
+
+// Test hook: ?clockOffset=<ms> shifts the app's clock (to test midnight and the reminder).
+const clockOffset = Number(new URLSearchParams(location.search).get('clockOffset')) || 0;
+const now = () => Date.now() + clockOffset;
+const CLOCK_MS = 10_000;
 
 const CAMERA_KEYS = ['deviceId', 'width', 'height'];
 const DETECTOR_KEYS = ['backend', 'maxDetected', 'minFacePx'];
 
 const app = {
-  state: 'LOADING', // LOADING | READY | WATCHING | PAUSED | ERROR
+  state: 'LOADING', // LOADING | READY | WATCHING | STOPPING | PAUSED | ERROR
   settings: null,
   cam: null, // { width, height }
   awake: 'off',
@@ -31,6 +38,25 @@ const app = {
   knownCount: 0,
   members: [],
   stats: createStats(),
+  mode: null,
+  day: null,
+  pending: 0,
+  lastReminderDay: null,
+};
+
+// Context handed to the active mode.
+const ctx = {
+  db,
+  get settings() { return app.settings; },
+  now,
+  log,
+  onConfirmed(memberId) {
+    if (app.settings.alert === 'sound') beep();
+    log(`Sighting confirmed: ${app.members.find((m) => m.id === memberId)?.name ?? memberId}`);
+  },
+  onCandidate() {
+    refreshBadge();
+  },
 };
 
 const video = document.getElementById('video');
@@ -61,9 +87,15 @@ async function boot() {
   document.getElementById('version').textContent = VERSION;
   app.settings = loadSettings();
   log(`SnipeCam ${VERSION} · ${navigator.userAgent}`);
-  await openDb();
+  await db.openDb();
   await reloadMembers();
+  app.mode = getMode(app.settings.mode);
+  app.day = dayKey(now());
+  const purged = await db.purgeExpired(app.day);
+  if (purged) log(`Deleted ${purged} unposted photo(s) from earlier days`);
+  await refreshBadge();
   wireUi();
+  setInterval(clock, CLOCK_MS);
   setState('LOADING');
   await loadDetector();
   // Test hook: ?autostart starts the camera without a tap (used by automated browser tests).
@@ -71,8 +103,38 @@ async function boot() {
 }
 
 async function reloadMembers() {
-  app.members = await listMembers();
+  app.members = await db.listMembers();
   log(`Roster: ${app.members.length} member${app.members.length === 1 ? '' : 's'}`);
+}
+
+async function refreshBadge() {
+  app.pending = (await db.listCandidates(app.day)).length;
+  const badge = document.getElementById('badge');
+  badge.textContent = app.pending;
+  badge.hidden = app.pending === 0;
+  if (isDim()) setDim(true, dimText());
+}
+
+function dimText() {
+  const fps = app.stats.fps ? `${app.stats.fps.toFixed(1)} fps` : 'starting';
+  return `Watching · ${fps} · ${app.pending} caught${app.pending ? ' · post by 12 am' : ''}`;
+}
+
+// Runs every CLOCK_MS: midnight rollover (rule 9) and the post-by-midnight reminder.
+async function clock() {
+  const today = dayKey(now());
+  if (today !== app.day) {
+    app.day = today;
+    const purged = await db.purgeExpired(today);
+    log(`New day ${today}: deleted ${purged} unposted photo(s); locks reset`);
+    await app.mode.onDayChanged(ctx);
+    await refreshBadge();
+  }
+  if (app.pending > 0 && reminderDue(now(), app.settings.reminderAt, app.lastReminderDay)) {
+    app.lastReminderDay = today;
+    ui.banner(`${app.pending} snipe${app.pending === 1 ? '' : 's'} waiting. Post before midnight!`);
+    beep(660, 300);
+  }
 }
 
 async function loadDetector() {
@@ -105,16 +167,24 @@ async function startWatch() {
   }
   app.awake = await keepAwake(true);
   log(`Camera ${app.cam.width}×${app.cam.height}; keep-awake: ${app.awake}`);
+  await app.mode.start(ctx);
   setState('WATCHING');
   startLoop();
 }
 
 async function stopWatch(nextState = 'READY') {
   stopLoop();
+  app.state = 'STOPPING'; // no further ticks; UI keeps showing Watching until the camera is released
+  await waitForTick();
+  await app.mode.stop(ctx);
   stopCamera(video);
   app.awake = await keepAwake(false);
   setDim(false);
   setState(nextState);
+}
+
+async function waitForTick() {
+  while (app.busy) await new Promise((r) => setTimeout(r, 20));
 }
 
 function startLoop() {
@@ -136,6 +206,7 @@ async function tick() {
   if (!app.busy && video.readyState >= 2) {
     app.busy = true;
     let frame = null;
+    let handedOff = false;
     try {
       frame = await grabFrame(video, app.settings.zoom);
       const faces = await detect(frame.bitmap, { tiles: app.settings.tiles });
@@ -149,10 +220,13 @@ async function tick() {
         debug: app.settings.debugFaces, showLabels: app.settings.showLabels,
       });
       ui.setStatus({ detail: statusDetail() });
+      if (isDim()) setDim(true, dimText());
+      handedOff = true; // the mode owns the frame from here
+      await app.mode.tick(ctx, frame, results);
     } catch (err) {
       log(err, 'error');
     } finally {
-      frame?.bitmap.close();
+      if (!handedOff) frame?.bitmap.close();
       app.busy = false;
     }
   }
@@ -196,7 +270,7 @@ function wireUi() {
     if (app.state === 'WATCHING') stopWatch();
     else startWatch();
   });
-  btnDim.addEventListener('click', () => setDim(true, `Watching · ${app.backend}`));
+  btnDim.addEventListener('click', () => setDim(true, dimText()));
   document.getElementById('dim').addEventListener('click', () => setDim(false));
 
   for (const btn of document.querySelectorAll('[data-go]')) {
@@ -218,6 +292,9 @@ function wireUi() {
 
   document.addEventListener('visibilitychange', onVisibility);
 }
+
+// Test hook for automated browser tests (read-only inspection of state).
+window.snipecam = { app, ctx, now };
 
 boot().catch((err) => {
   log(err, 'error');

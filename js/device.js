@@ -71,6 +71,10 @@ export function beep(freq = 880, ms = 150) {
   osc.stop(t + ms / 1000);
 }
 
+export function isDim() {
+  return !document.getElementById('dim').hidden;
+}
+
 // Black overlay on top of the video. The video keeps playing underneath, so detection continues.
 export function setDim(on, statusText = '') {
   const el = document.getElementById('dim');

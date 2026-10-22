@@ -28,6 +28,12 @@ for n in celeste christina lauren lexi linda nicole tasia tetiana; do get "perso
 # Fake-camera video for Chromium (--use-file-for-fake-video-capture): one face centered in a 1280x720 frame
 [ -s "$F/face-cam.y4m" ] || ffmpeg -loglevel error -y -loop 1 -i "$F/people/emotions-a/1.jpg" \
   -vf "scale=-2:600,pad=1280:720:(ow-iw)/2:(oh-ih)/2:gray" -r 5 -t 1 -pix_fmt yuv420p "$F/face-cam.y4m"
+# Fake-camera loop for catching tests: persons A and B side by side for 6 s, then an empty frame for 8 s
+[ -s "$F/pair-cam.y4m" ] || ffmpeg -loglevel error -y \
+  -loop 1 -t 6 -i "$F/people/emotions-a/1.jpg" -loop 1 -t 6 -i "$F/people/emotions-b/5.jpg" \
+  -f lavfi -t 8 -i color=c=gray:s=960x540:r=2 \
+  -filter_complex "[0]scale=-2:480,setsar=1[a];[1]scale=-2:480,setsar=1[b];[a][b]hstack=2,pad=960:540:(ow-iw)/2:(oh-ih)/2:gray,fps=2,format=yuv420p[p];[2]format=yuv420p[g];[p][g]concat=n=2:v=1" \
+  -pix_fmt yuv420p "$F/pair-cam.y4m"
 [ -s "$F/blank.png" ] || ffmpeg -loglevel error -y -f lavfi -i color=c=gray:s=640x480 -frames:v 1 "$F/blank.png"
 # File list for tests/tune.html (static servers can't list folders). Add your own photos to
 # people/<name>/ and re-run this script to include them.

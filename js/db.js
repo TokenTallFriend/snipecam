@@ -120,6 +120,89 @@ export async function clearAll() {
   await complete(t);
 }
 
+// ---------- Candidates (caught photos) ----------
+// { id, memberId, day, jpeg: ArrayBuffer, thumb, quality, similarity, box, inFrame, seenAt, status: 'pending'|'dismissed' }
+// The photo is stored as an ArrayBuffer (more portable across browsers' IndexedDB than a Blob).
+
+export const candidateBlob = (c) => new Blob([c.jpeg], { type: 'image/jpeg' });
+
+export async function getCandidate(memberId, day) {
+  const t = await transaction('candidates');
+  return (await request(t.objectStore('candidates').index('memberDay').get([memberId, day]))) ?? null;
+}
+
+// Saves a candidate. At most one per member per day: an existing one for that member/day is overwritten.
+export async function putCandidate(c) {
+  const t = await transaction('candidates', 'readwrite');
+  const store = t.objectStore('candidates');
+  const existing = await request(store.index('memberDay').get([c.memberId, c.day]));
+  const record = { ...c, id: existing?.id ?? c.id };
+  store.put(record);
+  await complete(t);
+  return record;
+}
+
+// Pending candidates (optionally for one day), newest first.
+export async function listCandidates(day = null) {
+  const t = await transaction('candidates');
+  const all = day ? await request(t.objectStore('candidates').index('day').getAll(day)) : await request(t.objectStore('candidates').getAll());
+  return all.filter((c) => c.status === 'pending').sort((a, b) => b.seenAt - a.seenAt);
+}
+
+export async function deleteCandidates(ids) {
+  const t = await transaction('candidates', 'readwrite');
+  for (const id of ids) t.objectStore('candidates').delete(id);
+  await complete(t);
+}
+
+// "Not them": keeps the record (so the slot stays known) but marks it dismissed; a new sighting may replace it.
+export async function dismissCandidates(ids) {
+  const t = await transaction('candidates', 'readwrite');
+  const store = t.objectStore('candidates');
+  for (const id of ids) {
+    const c = await request(store.get(id));
+    if (c) store.put({ ...c, status: 'dismissed', jpeg: new ArrayBuffer(0), thumb: '' });
+  }
+  await complete(t);
+}
+
+// Rule 9: candidates from earlier days can't be posted; delete them. Returns how many were removed.
+export async function purgeExpired(today) {
+  const t = await transaction('candidates', 'readwrite');
+  const range = IDBKeyRange.upperBound(today, true);
+  const n = await request(t.objectStore('candidates').index('day').count(range));
+  const cursorReq = t.objectStore('candidates').index('day').openCursor(range);
+  cursorReq.onsuccess = () => {
+    const cursor = cursorReq.result;
+    if (cursor) {
+      cursor.delete();
+      cursor.continue();
+    }
+  };
+  await complete(t);
+  return n;
+}
+
+// ---------- Locks (member already sniped / not snipeable today) ----------
+// { memberId, day, at, via: 'shared'|'saved'|'manual'|'sniped-me' }
+
+export async function lock(memberIds, day, via, at = Date.now()) {
+  const t = await transaction('locks', 'readwrite');
+  for (const memberId of memberIds) t.objectStore('locks').put({ memberId, day, at, via });
+  await complete(t);
+}
+
+export async function unlock(memberId, day) {
+  const t = await transaction('locks', 'readwrite');
+  t.objectStore('locks').delete([memberId, day]);
+  await complete(t);
+}
+
+export async function listLocks(day) {
+  const t = await transaction('locks');
+  return request(t.objectStore('locks').index('day').getAll(day));
+}
+
 // ---------- Export / import (roster only) ----------
 
 export async function exportJson() {

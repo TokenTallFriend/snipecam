@@ -114,7 +114,7 @@ Face      { box: [x, y, w, h] /* source px */, score, embedding: Float32Array }
 
 Match     { memberId, similarity, quality, box }      // unknown faces dropped; never stored or drawn
 
-Candidate { id, memberId, day /* "2026-10-21" */, blob /* JPEG */, thumb, quality, similarity,
+Candidate { id, memberId, day /* "2026-10-21" */, jpeg: ArrayBuffer /* JPEG bytes */, thumb, quality, similarity,
             box, inFrame: memberId[] /* all recognized members in this photo */, seenAt,
             status: 'pending'|'dismissed' }            // max 1 pending per member per day
 
@@ -246,20 +246,22 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | Function | Purpose |
 |---|---|
 | `dayKey(date) → "YYYY-MM-DD"` | Local calendar date (midnight rollover, rule 9) |
-| `decide({existing, locked, incoming}) → 'keep'\|'replace'\|'discard'` | §6.4 |
+| `decide({existing, locked, incoming}) → 'keep'\|'replace'\|'discard'` | §6.4; replace also requires similarity ≥ existing − `SIMILARITY_GUARD` (0.03), so a sharp lookalike can't push out a real catch |
+| `reminderDue(now, reminderAt, lastReminderDay)` | Once per day after `reminderAt` |
 | `tags(candidate, lockedIds) → {tag: id[], flagged: id[]}` | Rule 4: everyone in frame; locked ones flagged |
 | `isExpired(candidate, now)` | `candidate.day !== dayKey(now)` |
 | `msUntilDeadline(now)` | Time to next midnight |
 | `inRehearsalWindow(date, rehearsals, padMin = 30)` | Rule 1c flag (P6) |
 
-- [ ] T-RUL-1 [U] `dayKey` 23:59 vs 00:01 → different days
-- [ ] T-RUL-2 [U] `decide`: locked → discard regardless of quality
-- [ ] T-RUL-3 [U] `decide`: no existing → keep; existing dismissed → keep
-- [ ] T-RUL-4 [U] `decide`: lower existing → replace; higher/equal → discard
-- [ ] T-RUL-5 [U] `tags`: all inFrame members tagged; locked ones in `flagged`
-- [ ] T-RUL-6 [U] `isExpired` false same day, true after midnight
-- [ ] T-RUL-7 [U] `msUntilDeadline` at 23:00 = 3 600 000
-- [ ] T-RUL-8 [U] `inRehearsalWindow` true at start−30, end+30; false at start−31
+- [x] T-RUL-1 [U] `dayKey` 23:59 vs 00:01 → different days
+- [x] T-RUL-2 [U] `decide`: locked → discard regardless of quality
+- [x] T-RUL-3 [U] `decide`: no existing → keep; existing dismissed → keep
+- [x] T-RUL-4 [U] `decide`: lower existing → replace; higher/equal → discard
+- [x] T-RUL-5 [U] `tags`: all inFrame members tagged; locked ones in `flagged`
+- [x] T-RUL-6 [U] `isExpired` false same day, true after midnight
+- [x] T-RUL-7 [U] `msUntilDeadline` at 23:00 = 3 600 000
+- [x] T-RUL-8 [U] `inRehearsalWindow` true at start−30, end+30; false at start−31; weekday respected
+- [x] T-RUL-9 [U] `reminderDue` once per day after `reminderAt`
 
 ### 7.3 `modes/index.js`, `modes/tripod.js`
 | Function | Purpose |
@@ -270,11 +272,14 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | `tripod.stop(ctx)` | tracker.flush → handle ended |
 | `tripod.onLocksChanged(ctx)` | Refresh lock set (after share/manual lock) |
 
-- [ ] T-MOD-1 [U] `getMode('nope')` → tripod; every registered mode has `id,start,tick,stop`
-- [ ] T-MOD-2 [B] Fake ctx + scripted matches: one pass → exactly 1 `putCandidate`
-- [ ] T-MOD-3 [B] Locked member matches → no candidate, no beep
-- [ ] T-MOD-4 [B] Two members in same frame → candidate `inFrame` has both
-- [ ] T-MOD-5 [B] Lock mid-session → that session's candidate discarded
+- [x] T-MOD-1 [U] `getMode('nope')` → tripod; every registered mode has `id,start,tick,stop`
+- [x] T-MOD-2 [B] Fake ctx + scripted matches: one pass → exactly 1 `putCandidate`
+- [x] T-MOD-3 [B] Locked member matches → no candidate, no beep
+- [x] T-MOD-4 [B] Two members in same frame → candidate `inFrame` has both
+- [x] T-MOD-5 [B] Lock mid-session → that session's candidate discarded
+- [x] T-MOD-6 [B] Second, worse pass same day → still one candidate (best kept)
+- [x] T-MOD-7 [B] Faces < `minCandidateFacePx` never become candidates (rule 3)
+- [x] T-MOD-8 [B] Stop mid-sighting flushes it into a candidate
 
 ### 7.4 `log.js`
 | Function | Purpose |
@@ -314,7 +319,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-DEV-1 [M] iPhone Home Screen app: no auto-lock over 30 min (Auto-Lock set to 30 s to prove it)
 - [x] T-DEV-2 [M] Same with Low Power Mode (record: passed)
 - [x] T-DEV-3 [M] Wake lock restored after app switch + Resume
-- [ ] T-DEV-4 [M] Dim mode: detection still runs (candidate created)
+- [x] T-DEV-4 [B] Dim mode: detection still runs (candidate created) (automated in T-E2E-1)
 - [ ] T-DEV-5 [M] Beep audible when `alert: sound`; silent when off
 
 ### 7.7 `detector.js`, `loop.js`
@@ -369,30 +374,29 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 ### 7.9 `tracker.js` [pure]
 | Function | Purpose |
 |---|---|
-| `createTracker({minHits, gapSec, onDispose})` | Frames are opaque refs; `onDispose(ref)` for every discarded frame |
-| `tracker.update(hits, now) → {confirmed: id[], ended: [{memberId, frame, quality, meta, hits, start, end}]}` | `hits = [{memberId, quality, frame, meta}]`; call every tick |
-| `tracker.drop(memberId)` | End + dispose a member's session (lock mid-session) |
-| `tracker.flush(now)` / `tracker.reset()` | End all / dispose all |
+| `createTracker({minHits, gapSec, onDispose})` | Frames are opaque, shared between members in a tick, reference-counted; `onDispose(frame)` once nothing holds it |
+| `tracker.update(hits, now) → {confirmed: id[], ended: [{memberId, frame, quality, meta, hits, start, end}]}` | `hits = [{memberId, quality, frame, meta}]`; call every tick. Tracker owns every frame passed in; each `ended` entry hands one reference to the caller |
+| `tracker.release(frame)` | Caller is done with an `ended` frame |
+| `tracker.drop(memberId)` | End + dispose a member's session silently (locked mid-session) |
+| `tracker.flush()` / `tracker.reset()` | End all (reported) / dispose all |
 
-- [ ] T-TRK-1 [U] 1 hit then gap → not reported, frame disposed
-- [ ] T-TRK-2 [U] ≥ minHits → `confirmed` once, at minHits-th hit
-- [ ] T-TRK-3 [U] Ended session returns highest-quality frame; others disposed
-- [ ] T-TRK-4 [U] Gap > gapSec → two sessions
-- [ ] T-TRK-5 [U] Two members independent
-- [ ] T-TRK-6 [U] `drop`, `flush`, `reset` behave; no leaks
-- [ ] T-TRK-7 [U] Every frame returned once or disposed once
+- [x] T-TRK-1 [U] 1 hit then gap → not reported, frame disposed
+- [x] T-TRK-2 [U] ≥ minHits → `confirmed` once, at minHits-th hit
+- [x] T-TRK-3 [U] Ended session returns highest-quality frame; others disposed
+- [x] T-TRK-4 [U] Gap > gapSec → two sessions
+- [x] T-TRK-5 [U] Two members independent; shared frame disposed only after both release
+- [x] T-TRK-6 [U] `drop`, `flush`, `reset` behave
+- [x] T-TRK-7 [U] 400-tick random stream: every frame disposed exactly once (no leaks)
 
 ### 7.10 `capture.js`
 | Function | Purpose |
 |---|---|
 | `grabFrame(videoEl, zoom=1) → ImageBitmap` | Center-crop by zoom |
-| `copyFrame(bitmap)` | Independent copy |
 | `cropFace(bitmap, box, pad=0.3, size=96) → dataURL` | Thumbnail, clamped |
-| `toJpegBlob(bitmap, q=0.9)` | JPEG |
+| `toJpegBlob(bitmap, q=0.9)` | JPEG (OffscreenCanvas, canvas fallback) |
 
-- [ ] T-CAP-1 [B] JPEG type, size > 0, dims preserved
+- [x] T-CAP-1 [B] JPEG type, size > 0, dims preserved (via T-DB-9)
 - [ ] T-CAP-2 [B] Edge box crop OK; 96×96
-- [ ] T-CAP-4 [B] copy survives closing original
 
 ### 7.11 `enroll.js`
 | Function | Purpose |
@@ -413,7 +417,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 |---|---|
 | `openDb()` | Stores `members`, `candidates`, `locks` |
 | `listMembers` / `saveMember` / `deleteMember` | Delete also removes member's candidates + locks |
-| `listCandidates(day)` / `getCandidate(memberId, day)` / `putCandidate(c)` / `deleteCandidates(ids)` / `dismissCandidates(ids)` | Inbox |
+| `listCandidates(day)` / `getCandidate(memberId, day)` / `putCandidate(c)` / `deleteCandidates(ids)` / `dismissCandidates(ids)` / `candidateBlob(c)` | Inbox; photo stored as ArrayBuffer (portable across IndexedDB implementations) |
 | `purgeExpired(today)` | Delete candidates with `day < today` (rule 9) |
 | `lock(memberIds, day, via)` / `unlock(memberId, day)` / `listLocks(day)` | Daily lock |
 | `exportJson()` / `importJson(str, {mode})` | Roster only |
@@ -425,10 +429,11 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-DB-4 [U] `validateMember` rejects bad records
 - [x] T-DB-5 [B] Malformed import → error, DB unchanged
 - [x] T-DB-10 [U] `normalizeSlack`
-- [ ] T-DB-6 [B] `putCandidate` same member+day overwrites
-- [ ] T-DB-7 [B] `lock` → listed that day, not next; `unlock` removes
-- [ ] T-DB-8 [B] `purgeExpired` removes yesterday's, keeps today's
-- [ ] T-DB-9 [B] Candidate blob survives reload
+- [x] T-DB-6 [B] `putCandidate` same member+day overwrites
+- [x] T-DB-7 [B] `lock` → listed that day, not next; `unlock` removes
+- [x] T-DB-8 [B] `purgeExpired` removes yesterday's, keeps today's
+- [x] T-DB-9 [B] Candidate photo round-trips as a real JPEG
+- [x] T-DB-11 [B] `dismissCandidates` marks dismissed, drops photo; dismissed not listed
 
 ### 7.13 `share.js`
 | Function | Purpose |
@@ -478,9 +483,9 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-MAIN-1 [M] Boot on iPhone → READY (detector WebGPU, 0.2 s warm)
 - [x] T-MAIN-2 [B] Loop never overlaps; idle fps after idleAfterSec (automated: T-MAIN-2, T-APP-13)
 - [ ] T-MAIN-3 [M] Background → PAUSED → Resume; candidates intact
-- [ ] T-MAIN-4 [M] Stop mid-session → candidate still produced
-- [ ] T-MAIN-5 [M] Clock faked to 23:59:30 → candidates purged after midnight; locks reset
-- [ ] T-MAIN-6 [M] Clock faked to 23:00 with pending → banner + beep
+- [x] T-MAIN-4 [B] Stop mid-session → candidate still produced (automated)
+- [x] T-MAIN-5 [B] Clock faked to 23:59:48 (`?clockOffset`) → candidates purged after midnight; badge clears
+- [x] T-MAIN-6 [B] Clock faked to 23:00 with pending → banner (+ beep)
 
 ### 7.16 App-level automated checks (`npm run test:app`, Playwright, fake camera, iPhone-size viewport)
 - [x] T-APP-1 Boots to Ready with no errors
@@ -506,12 +511,12 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 
 ## 8. End-to-End, Power & Accuracy Tests
 
-- [ ] T-E2E-1 [M] Member walks through once → exactly 1 candidate
-- [ ] T-E2E-2 [M] Member passes 5× → still 1 candidate, best photo
-- [ ] T-E2E-3 [M] Share member → later passes → nothing; next day → new candidate
+- [x] T-E2E-1 [B] Fake camera loop (A+B 6 s, empty 8 s): one pass → 1 candidate each; badge 2; dim text "2 caught · post by 12 am" (repeat on device)
+- [x] T-E2E-2 [B] Further passes → still 1 per member (repeat on device)
+- [x] T-E2E-3 [B] Lock member → later passes → nothing (next-day part: T-MAIN-5 + T-RUL-1)
 - [ ] T-E2E-4 [M] "Sniped today" in Roster → member ignored rest of day
 - [ ] T-E2E-5 [M] 15 min strangers only → 0 candidates, nothing drawn
-- [ ] T-E2E-6 [M] Two members together → candidates tag both; sharing one locks both and removes the other's pending
+- [x] T-E2E-6 [B] Two members together → candidates list both (share-locks-both part: P5)
 - [ ] T-E2E-7 [M] **Power:** 60 min, dim, unplugged → battery drop ____ % (goal ≤ 12 %); not hot
 - [ ] T-E2E-8 [M] 2-hour tripod session plugged in → no crash, candidates intact
 - [ ] T-E2E-9 [M] Max recognition distance 1× ____ m, 2× ____ m (P2 detection only, poor light: ~15–20 ft, tiles off ≈ 2×2, faces down to ~30 px)
