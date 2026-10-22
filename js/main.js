@@ -7,9 +7,12 @@ import { keepAwake, unlockAudio, setDim } from './device.js';
 import { initDetector, detect } from './detector.js';
 import { grabFrame } from './capture.js';
 import { nextDelay, createStats } from './loop.js';
+import { matchFaces } from './matcher.js';
+import { openDb, listMembers } from './db.js';
+import { initRoster, showRoster } from './roster.js';
 import * as ui from './ui.js';
 
-export const VERSION = 'P2';
+export const VERSION = 'P3';
 
 const CAMERA_KEYS = ['deviceId', 'width', 'height'];
 const DETECTOR_KEYS = ['backend', 'maxDetected', 'minFacePx'];
@@ -25,6 +28,8 @@ const app = {
   idle: false,
   lastFaceAt: 0,
   faceCount: 0,
+  knownCount: 0,
+  members: [],
   stats: createStats(),
 };
 
@@ -48,7 +53,7 @@ function statusDetail() {
   if (app.state !== 'WATCHING' || !app.cam) return app.backend ? `detector: ${app.backend}` : '';
   const fps = app.stats.fps ? `${app.stats.fps.toFixed(1)} fps${app.idle ? ' (idle)' : ''}` : 'starting';
   const ms = app.stats.detectMs ? ` · ${Math.round(app.stats.detectMs)} ms` : '';
-  return `${fps}${ms} · faces ${app.faceCount} · ${app.backend}`;
+  return `${fps}${ms} · faces ${app.faceCount} · known ${app.knownCount}`;
 }
 
 async function boot() {
@@ -56,11 +61,18 @@ async function boot() {
   document.getElementById('version').textContent = VERSION;
   app.settings = loadSettings();
   log(`SnipeCam ${VERSION} · ${navigator.userAgent}`);
+  await openDb();
+  await reloadMembers();
   wireUi();
   setState('LOADING');
   await loadDetector();
   // Test hook: ?autostart starts the camera without a tap (used by automated browser tests).
   if (new URLSearchParams(location.search).has('autostart')) startWatch();
+}
+
+async function reloadMembers() {
+  app.members = await listMembers();
+  log(`Roster: ${app.members.length} member${app.members.length === 1 ? '' : 's'}`);
 }
 
 async function loadDetector() {
@@ -128,9 +140,14 @@ async function tick() {
       frame = await grabFrame(video, app.settings.zoom);
       const faces = await detect(frame.bitmap, { tiles: app.settings.tiles });
       app.stats.record(started, performance.now() - started);
+      const results = matchFaces(faces, app.members, app.settings);
       app.faceCount = faces.length;
+      app.knownCount = results.filter((r) => r.match).length;
       if (faces.length) app.lastFaceAt = performance.now();
-      ui.renderFaces(overlay, faces, { videoW: video.videoWidth, videoH: video.videoHeight, crop: frame.crop, debug: app.settings.debugFaces });
+      ui.renderFaces(overlay, results, {
+        videoW: video.videoWidth, videoH: video.videoHeight, crop: frame.crop,
+        debug: app.settings.debugFaces, showLabels: app.settings.showLabels,
+      });
       ui.setStatus({ detail: statusDetail() });
     } catch (err) {
       log(err, 'error');
@@ -183,8 +200,10 @@ function wireUi() {
   document.getElementById('dim').addEventListener('click', () => setDim(false));
 
   for (const btn of document.querySelectorAll('[data-go]')) {
-    btn.addEventListener('click', () => (btn.dataset.go === 'settings' ? openSettings() : ui.showView(btn.dataset.go)));
+    const go = btn.dataset.go;
+    btn.addEventListener('click', () => (go === 'settings' ? openSettings() : go === 'roster' ? showRoster() : ui.showView(go)));
   }
+  initRoster({ onChanged: reloadMembers });
 
   document.getElementById('btn-log').addEventListener('click', () => toggleLog());
   document.getElementById('btn-log-close').addEventListener('click', () => toggleLog(false));

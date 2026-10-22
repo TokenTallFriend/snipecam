@@ -16,7 +16,7 @@ export const FIELDS = [
   { key: 'idleFps', group: 'Performance', label: 'Idle checks per second', type: 'number', min: 0.1, max: 5, step: 0.1, default: 0.5 },
   { key: 'idleAfterSec', group: 'Performance', label: 'Go idle after (s) with no faces', type: 'number', min: 5, max: 3600, step: 1, int: true, default: 60 },
   // Recognition
-  { key: 'threshold', group: 'Recognition', label: 'Match threshold', type: 'number', min: 0, max: 1, step: 0.01, default: 0.55 },
+  { key: 'threshold', group: 'Recognition', label: 'Match threshold', type: 'number', min: 0, max: 1, step: 0.01, default: 0.64 }, // from tests/tune.html; re-tune with real members
   { key: 'margin', group: 'Recognition', label: 'Margin over runner-up', type: 'number', min: 0, max: 0.5, step: 0.01, default: 0.05 },
   { key: 'tiles', group: 'Recognition', label: 'Distant-face scan', type: 'select', options: [[1, 'Off'], [2, '2×2 tiles'], [3, '3×3 tiles']], default: 2 },
   { key: 'maxDetected', group: 'Recognition', label: 'Max faces per frame', type: 'number', min: 1, max: 20, step: 1, int: true, default: 10 },

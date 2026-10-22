@@ -18,6 +18,8 @@ On-device, in-browser face recognition for the club sniping game. **Passive (tri
 | Stack | Plain HTML/CSS/ES modules. No framework, no build step. |
 | Face library | `@vladmandic/human@3.3.6` (detector + mesh + `faceres` 1024-d embedding) from jsDelivr; models cached in IndexedDB after first load. |
 | Distant faces | Detector shrinks input to 256 px → faces < ~110 px in a 1080p frame are missed (~2 m on the 1× lens). Fix: **two-stage detection**: (1) cheap face-finding on full frame + n×n overlapping tiles (default 2×2), merge duplicates; (2) mesh + embedding once per face on an enlarged crop. Empty scenes cost only stage 1. |
+| Recognition model | Human's default `faceres` (1024-d). Evaluated in P3 against `faceres-deep`, MobileFaceNet, and 4 InsightFace models on the same 44 photos: `faceres` was best (lowest error, most catches at 0.1% false match). |
+| Match threshold | **0.64** (cosine, best of a member's enrolled photos). At 0.55, 17% of stranger probes matched a member on the fixture set. Re-tune with real members (T-TUNE-1). |
 | Backend | `webgpu`, fallback `webgl`. |
 | Hosting | GitHub Pages (public repo, HTTPS). Dev on `localhost`. |
 | Storage | IndexedDB per device: roster, candidates (JPEG), daily lock log. Settings in localStorage. **No face data in the repo.** |
@@ -77,6 +79,7 @@ Source: *Sniping Rules (Updated Spring 2026)*. Game logic lives in `js/rules.js`
 │   ├── tracker.js          [pure] Sighting sessions → one best frame per pass
 │   ├── capture.js          Grab/copy frame, crop, JPEG
 │   ├── enroll.js           Photos → validated embeddings + thumbnails
+│   ├── roster.js           Roster + member editor screens, export/import
 │   ├── db.js               IndexedDB: members, candidates, locks; export/import
 │   ├── share.js            Tag text, single-file share, clipboard, download
 │   └── ui.js               Views, labels, inbox, roster, settings
@@ -84,7 +87,8 @@ Source: *Sniping Rules (Updated Spring 2026)*. Game logic lives in `js/rules.js`
 │   ├── browser.html        Runs tests/browser/*.test.js, pass/fail by test ID
 │   ├── harness.js          Minimal test()/assert for browser tests
 │   ├── bench.html          Detector timing benchmark
-│   ├── tune.html           Threshold tuning (labeled folder → similarity stats)
+│   ├── tune.html           Threshold tuning (fixtures manifest → member-level similarity stats)
+│   ├── tunelib.js          [pure] Pair/member-level similarities, rates, suggested threshold
 │   ├── unit/               *.test.js for [pure] modules
 │   ├── browser/            *.test.js needing DOM/camera/IndexedDB/Human
 │   └── fixtures/           GITIGNORED. people/<name>/*.jpg, blank.png, group.jpg
@@ -332,7 +336,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-DET-3 [B] `group.jpg` 2×2 → ≥ 13 faces (baseline 13 of ~16); embeddings 1024-d
 - [x] T-DET-4 [B] Same-person similarity > different-person
 - [x] T-DET-5 [U] `quality` increases with size, score, similarity
-- [ ] T-DET-6 [B/M] Detect time — `tests/bench.html` on iPhone: tiles off ____ ms, 2×2 ____ ms, 3×3 ____ ms (target 2×2 ≤ 250 ms)
+- [x] T-DET-6 [B/M] Detect time — `tests/bench.html` on iPhone 17 (WebGPU, 1 face): tiles off 64 ms, 2×2 126 ms, 3×3 147 ms (target 2×2 ≤ 250 ms ✓)
 - [x] T-DET-7 [B] Without WebGPU → webgl fallback (Firefox/WebKit headless)
 - [x] T-DET-8 [U] `humanConfig`: only face modules enabled; version pinned
 - [x] T-DET-9 [U] `toFaces` maps, rounds, filters, converts embeddings
@@ -349,14 +353,18 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 |---|---|
 | `cosine(a, b)` | Throws on length mismatch |
 | `memberScore(embedding, member)` | Max cosine over member's embeddings (−1 if none) |
+| `rank(embedding, members) → {top, runnerUp}` | Best two members regardless of threshold |
 | `bestMatch(embedding, members, {threshold, margin}) → {member, similarity} \| null` | ≥ threshold and beats runner-up by ≥ margin |
+| `matchFaces(faces, members, opts) → [{face, top, match}]` | Per face: match (or null) + top candidate for debug overlay |
 
-- [ ] T-MAT-1 [U] identical 1, orthogonal 0, opposite −1
-- [ ] T-MAT-2 [U] length mismatch throws
-- [ ] T-MAT-3 [U] empty roster → null
-- [ ] T-MAT-4 [U] below threshold → null
-- [ ] T-MAT-5 [U] within margin → null
-- [ ] T-MAT-6 [U] picks highest; 0-embedding member ignored
+- [x] T-MAT-1 [U] identical 1, orthogonal 0, opposite −1, scale-invariant
+- [x] T-MAT-2 [U] length mismatch throws
+- [x] T-MAT-3 [U] empty roster → null
+- [x] T-MAT-4 [U] below threshold → null
+- [x] T-MAT-5 [U] within margin → null
+- [x] T-MAT-6 [U] picks highest; best of member's photos; 0-embedding member ignored
+- [x] T-MAT-7 [B] Real faces: 2 enrolled people recognized (0.70, 0.72), stranger unmatched
+- [x] T-MAT-8 [U] `matchFaces` returns top even when unmatched; skips faces without embedding
 
 ### 7.9 `tracker.js` [pure]
 | Function | Purpose |
@@ -389,14 +397,16 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 ### 7.11 `enroll.js`
 | Function | Purpose |
 |---|---|
-| `enrollFromFiles(files) → {embeddings, thumbs, results: [{name, status, note}]}` | §6.3 checks |
+| `enrollFromFiles(files) → [{name, status, note, embedding?, thumb?}]` | §6.3 checks (photos shrunk to 1600 px; tiles off) |
+| `evaluateFaces(faces)` [pure] | Used/skipped verdict + note |
 | `selfConsistency(embeddings) → {outlierIndex \| null}` [pure] | Flag photo unlike the others |
 
-- [ ] T-ENR-1 [B] Single clear face → used
-- [ ] T-ENR-2 [B] `blank.png` → "No face found"
-- [ ] T-ENR-3 [B] Group photo → largest + "Several faces"
-- [ ] T-ENR-4 [U] `selfConsistency` flags outlier
+- [x] T-ENR-1 [B] Single clear face → used
+- [x] T-ENR-2 [B] `blank.png` → "No face found"
+- [x] T-ENR-3 [B] Group photo → largest + "Several faces"
+- [x] T-ENR-4 [U] `selfConsistency` flags outlier
 - [ ] T-ENR-5 [M] iPhone HEIC photos work
+- [x] T-ENR-6 [U] `evaluateFaces`: no face / too small / unclear skipped; largest of several used
 
 ### 7.12 `db.js`
 | Function | Purpose |
@@ -409,11 +419,12 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | `exportJson()` / `importJson(str, {mode})` | Roster only |
 | `validateMember(obj) → string[]` [pure] | Errors |
 
-- [ ] T-DB-1 [B] Member CRUD; delete cascades
-- [ ] T-DB-2 [B] Export → clear → import equal
-- [ ] T-DB-3 [B] Merge import twice → no duplicates
-- [ ] T-DB-4 [U] `validateMember` rejects bad records
-- [ ] T-DB-5 [B] Malformed import → error, DB unchanged
+- [x] T-DB-1 [B] Member CRUD; delete cascades
+- [x] T-DB-2 [B] Export → clear → import equal
+- [x] T-DB-3 [B] Merge import twice → no duplicates
+- [x] T-DB-4 [U] `validateMember` rejects bad records
+- [x] T-DB-5 [B] Malformed import → error, DB unchanged
+- [x] T-DB-10 [U] `normalizeSlack`
 - [ ] T-DB-6 [B] `putCandidate` same member+day overwrites
 - [ ] T-DB-7 [B] `lock` → listed that day, not next; `unlock` removes
 - [ ] T-DB-8 [B] `purgeExpired` removes yesterday's, keeps today's
@@ -464,7 +475,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | `lockMember(id, via)` / `unlockMember(id)` | Roster actions |
 | `reloadMembers()` / `onVisibility()` | Roster refresh; PAUSED/Resume |
 
-- [ ] T-MAIN-1 [M] Boot on iPhone → READY (record: ____ s cold / ____ s warm)
+- [x] T-MAIN-1 [M] Boot on iPhone → READY (detector WebGPU, 0.2 s warm)
 - [x] T-MAIN-2 [B] Loop never overlaps; idle fps after idleAfterSec (automated: T-MAIN-2, T-APP-13)
 - [ ] T-MAIN-3 [M] Background → PAUSED → Resume; candidates intact
 - [ ] T-MAIN-4 [M] Stop mid-session → candidate still produced
@@ -485,6 +496,11 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-APP-11 Watch loop runs; status shows fps, detect ms, faces, backend
 - [x] T-APP-12 Face video as camera (Chromium) → detected; debug overlay box drawn and aligned
 - [x] T-APP-13 No faces → idle rate after `idleAfterSec`
+- [x] T-APP-14 Add member from 4 photos: 3 used, blank skipped; row shows `@handle · 3 photos`
+- [x] T-APP-15 Editor shows thumbnails and skipped-photo reason
+- [x] T-APP-16 Export downloads `snipecam-roster-YYYY-MM-DD.snipedb.json`; import on fresh device restores member
+- [x] T-APP-17 Delete member (confirm) removes them
+- [x] T-APP-18 Enrolled member on camera → green name label, `known 1`; strangers draw nothing
 
 ---
 
@@ -498,12 +514,15 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [ ] T-E2E-6 [M] Two members together → candidates tag both; sharing one locks both and removes the other's pending
 - [ ] T-E2E-7 [M] **Power:** 60 min, dim, unplugged → battery drop ____ % (goal ≤ 12 %); not hot
 - [ ] T-E2E-8 [M] 2-hour tripod session plugged in → no crash, candidates intact
-- [ ] T-E2E-9 [M] Max recognition distance 1× ____ m, 2× ____ m
+- [ ] T-E2E-9 [M] Max recognition distance 1× ____ m, 2× ____ m (P2 detection only, poor light: ~15–20 ft, tiles off ≈ 2×2, faces down to ~30 px)
 - [ ] T-E2E-10 [M] Full flow: catch → Inbox → Share selected → Slack posts with tags
 - [ ] T-E2E-11 [M] Fresh install via Add to Home Screen → enroll → watch → share
 
-**Threshold tuning (`tests/tune.html`, laptop):** pick `fixtures/people/` → same/different-person histograms → suggested threshold + margin.
-- [ ] T-TUNE-1 Same-person mean ____ · Diff-person mean ____ · threshold ____ · margin ____
+**Threshold tuning (`tests/tune.html`, laptop):** reads `fixtures/manifest.json` (people/<name>/ = known, strangers/ = non-members); enrolls first 3 photos per person, scores the rest by best match (as the app does); suggests the lowest threshold with ≤ 0.1% false matches.
+**Test people:** you + a friend are enough for every functional test. Accuracy against strangers is measured with ~30 sample strangers (fixtures) plus T-E2E-5 in a busy public place. For tuning, put 6–10 varied photos each in `tests/fixtures/people/<name>/`, re-run `tools/fetch-fixtures.sh`, open tune.html.
+- [x] T-TUNE-1a Fixture baseline (3 sample people, 30 strangers): member's own face mean 0.715 (min 0.654); others mean 0.471 (max 0.631) → threshold 0.64, margin 0.05
+- [ ] T-TUNE-1b With your + friend's photos: own-face min ____ · others max ____ · threshold ____
+- [x] T-TUNE-2..6 [U] Pair splitting, rates, suggestion, histogram, member-level scoring
 
 ---
 
@@ -543,5 +562,6 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | WebGPU quirks | webgl fallback |
 | Slack drops shared text | Tags copied to clipboard first |
 | Human CDN/model changes | Pinned version; SW caches models |
+| False matches (lookalike strangers) | Threshold 0.64 + margin + ≥ 2 hits per sighting; user confirms in Inbox. **P4:** a later, higher-quality pass must not replace a pending candidate with a lower similarity (guard in `rules.decide`). |
 | Rule violations (same event, classroom, rehearsal) | Can't auto-detect; time shown + rehearsal flag; user verifies before sharing |
 | Biometric data exposure | No fixtures/exports in repo; export files sensitive; enroll only consenting members (rule 10) |

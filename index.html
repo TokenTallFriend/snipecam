@@ -40,7 +40,29 @@
 
   <section data-view="roster" class="panel" hidden>
     <header class="pagebar"><button data-go="watch">‹ Back</button><h2>Roster</h2></header>
-    <p class="empty">Club members will be managed here (Phase 3).</p>
+    <div id="roster-list" class="list"></div>
+    <button id="btn-add-member" class="primary wide">+ Add member</button>
+    <div class="settings-actions">
+      <button id="btn-export">Export roster</button>
+      <label class="button">Import roster<input id="import-file" type="file" accept=".json,application/json" hidden></label>
+    </div>
+    <p class="note">Face data stays on this device. An exported roster contains everyone's face data, so share the file carefully. Only enroll members who've agreed to play.</p>
+  </section>
+
+  <section data-view="member" class="panel" hidden>
+    <header class="pagebar"><button id="btn-member-back">‹ Roster</button><h2 id="member-title">Add member</h2></header>
+    <fieldset>
+      <label class="field"><span>Name</span><input id="member-name" autocomplete="off" maxlength="60"></label>
+      <label class="field"><span>Slack handle</span><input id="member-slack" placeholder="@handle" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    </fieldset>
+    <label class="button wide">Add photos<input id="member-photos" type="file" accept="image/*" multiple hidden></label>
+    <p class="note">Use 3–10 clear photos of their face, ideally from different days, angles, and lighting.</p>
+    <div id="member-photo-grid" class="photo-grid"></div>
+    <div id="member-skipped" class="skipped"></div>
+    <div class="settings-actions">
+      <button id="btn-member-save" class="primary">Save</button>
+      <button id="btn-member-delete" class="danger">Delete member</button>
+    </div>
   </section>
 
   <section data-view="settings" class="panel" hidden>

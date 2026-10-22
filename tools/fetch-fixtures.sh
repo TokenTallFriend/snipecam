@@ -19,8 +19,18 @@ get person-vlado.jpg "$F/people/vlado/1.jpg"
 get person-vlado1.jpg "$F/people/vlado/2.jpg"
 get person-vlado5.jpg "$F/people/vlado/3.jpg"
 
+# Strangers: different people, used as non-members when tuning the match threshold
+mkdir -p "$F/strangers"
+for i in $(seq 1 16); do get "stock-models-$i.jpg" "$F/strangers/stock-models-$i.jpg"; done
+for i in $(seq 1 8); do get "stock-teen-$i.jpg" "$F/strangers/stock-teen-$i.jpg"; done
+for n in celeste christina lauren lexi linda nicole tasia tetiana; do get "person-$n.jpg" "$F/strangers/person-$n.jpg"; done
+
 # Fake-camera video for Chromium (--use-file-for-fake-video-capture): one face centered in a 1280x720 frame
 [ -s "$F/face-cam.y4m" ] || ffmpeg -loglevel error -y -loop 1 -i "$F/people/emotions-a/1.jpg" \
   -vf "scale=-2:600,pad=1280:720:(ow-iw)/2:(oh-ih)/2:gray" -r 5 -t 1 -pix_fmt yuv420p "$F/face-cam.y4m"
 [ -s "$F/blank.png" ] || ffmpeg -loglevel error -y -f lavfi -i color=c=gray:s=640x480 -frames:v 1 "$F/blank.png"
-echo "fixtures ready in $F"
+# File list for tests/tune.html (static servers can't list folders). Add your own photos to
+# people/<name>/ and re-run this script to include them.
+( cd "$F" && find people strangers -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) | sort ) |
+  python3 -c 'import sys, json; print(json.dumps([l.strip() for l in sys.stdin], indent=1))' > "$F/manifest.json"
+echo "fixtures ready in $F ($(grep -c '"' "$F/manifest.json") images)"

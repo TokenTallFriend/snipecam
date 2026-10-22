@@ -13,3 +13,14 @@ export async function grabFrame(videoEl, zoom = 1) {
   const bitmap = await createImageBitmap(videoEl, crop.x, crop.y, crop.w, crop.h);
   return { bitmap, crop };
 }
+
+// Square thumbnail around a face (with padding), as a small JPEG data URL.
+export function cropFace(bitmap, [x, y, w, h], pad = 0.3, size = 96) {
+  const side = Math.min(Math.round(Math.max(w, h) * (1 + 2 * pad)), bitmap.width, bitmap.height);
+  const sx = Math.round(Math.min(Math.max(0, x + w / 2 - side / 2), bitmap.width - side));
+  const sy = Math.round(Math.min(Math.max(0, y + h / 2 - side / 2), bitmap.height - side));
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  canvas.getContext('2d').drawImage(bitmap, sx, sy, side, side, 0, 0, size, size);
+  return canvas.toDataURL('image/jpeg', 0.8);
+}

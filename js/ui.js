@@ -12,9 +12,10 @@ export function mapBox([x, y, w, h], srcW, srcH, viewW, viewH) {
   return [x * scale + offX, y * scale + offY, w * scale, h * scale];
 }
 
-// Draws face boxes on the overlay canvas. `crop` is where the processed frame sits within the video.
-// P2: only drawn in debug mode (strangers are never shown in normal use).
-export function renderFaces(canvas, faces, { videoW, videoH, crop, debug = false }) {
+// Draws the overlay. `results` come from matchFaces: [{ face, top, match }].
+// Members get a green box + name (if showLabels). Strangers are drawn only in debug mode, with their closest member.
+// `crop` is where the processed frame sits within the video.
+export function renderFaces(canvas, results, { videoW, videoH, crop, debug = false, showLabels = true }) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
@@ -25,17 +26,25 @@ export function renderFaces(canvas, faces, { videoW, videoH, crop, debug = false
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  if (!debug || !videoW) return;
+  canvas.dataset.labels = results.filter((r) => r.match).map((r) => r.match.member.name).join(',');
+  if (!videoW) return;
   ctx.lineWidth = 2;
-  ctx.font = '13px system-ui, sans-serif';
-  for (const f of faces) {
-    const [x, y, bw, bh] = mapBox([f.box[0] + crop.x, f.box[1] + crop.y, f.box[2], f.box[3]], videoW, videoH, w, h);
-    ctx.strokeStyle = 'rgba(200,200,200,0.9)';
+  ctx.font = '600 14px system-ui, sans-serif';
+  for (const { face, top, match } of results) {
+    const isMember = !!match && showLabels;
+    if (!isMember && !debug) continue;
+    const [x, y, bw, bh] = mapBox([face.box[0] + crop.x, face.box[1] + crop.y, face.box[2], face.box[3]], videoW, videoH, w, h);
+    const label = isMember
+      ? match.member.name
+      : debug ? `${top ? `${top.member.name}? ${top.similarity.toFixed(2)}` : 'face'} · ${face.box[2]}px` : '';
+    const color = isMember ? '#22c55e' : 'rgba(200,200,200,0.9)';
+    ctx.strokeStyle = color;
     ctx.strokeRect(x, y, bw, bh);
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(x, y - 18, 64, 18);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(`${f.box[2]}px ${f.score.toFixed(2)}`, x + 3, y - 5);
+    const tw = ctx.measureText(label).width + 10;
+    ctx.fillStyle = isMember ? color : 'rgba(0,0,0,0.65)';
+    ctx.fillRect(x, y - 22, tw, 22);
+    ctx.fillStyle = isMember ? '#000' : '#fff';
+    ctx.fillText(label, x + 5, y - 6);
   }
 }
 
@@ -115,4 +124,49 @@ function makeInput(f, value, cameras) {
     if (f.type === 'number') Object.assign(input, { min: f.min, max: f.max, step: f.step, inputMode: 'decimal' });
   }
   return input;
+}
+
+// ---------- Roster ----------
+
+function el(tag, props = {}, ...children) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...children.filter((c) => c !== null && c !== undefined));
+  return e;
+}
+
+export function renderRoster(members, { onEdit }) {
+  const list = $('roster-list');
+  list.replaceChildren();
+  if (!members.length) {
+    list.append(el('p', { className: 'empty', textContent: 'No members yet. Add the people you want SnipeCam to recognize.' }));
+    return;
+  }
+  for (const m of members) {
+    const avatar = m.thumbs?.[0] ? el('img', { src: m.thumbs[0], alt: '' }) : el('span', { className: 'avatar' });
+    const n = m.embeddings.length;
+    const detail = `${m.slack || 'no Slack handle'} · ${n} photo${n === 1 ? '' : 's'}`;
+    const row = el('button', { className: 'member-row' }, avatar,
+      el('span', { className: 'info' }, el('b', { textContent: m.name }),
+        el('small', { textContent: detail }),
+        n < 3 ? el('small', { className: 'warn', textContent: 'Add more photos for better recognition' }) : null));
+    row.addEventListener('click', () => onEdit(m));
+    list.append(row);
+  }
+}
+
+// editing = { id, name, slack, photos: [{ thumb, note, outlier }], skipped: [{ name, note }] }
+export function renderMemberEditor(editing, { onRemove }) {
+  $('member-title').textContent = editing.id ? 'Edit member' : 'Add member';
+  $('btn-member-delete').hidden = !editing.id;
+  const grid = $('member-photo-grid');
+  grid.replaceChildren();
+  editing.photos.forEach((p, i) => {
+    const remove = el('button', { className: 'remove', textContent: '✕', ariaLabel: 'Remove photo' });
+    remove.addEventListener('click', () => onRemove(i));
+    const note = p.outlier ? "Doesn't match their other photos. Wrong person?" : p.note;
+    grid.append(el('div', { className: `photo${p.outlier ? ' outlier' : ''}` }, el('img', { src: p.thumb, alt: '' }), remove,
+      note ? el('small', { textContent: note }) : null));
+  });
+  const skipped = $('member-skipped');
+  skipped.replaceChildren(...editing.skipped.map((r) => el('div', {}, el('b', { textContent: '✗ Skipped ' }), `${r.name}: ${r.note}`)));
 }

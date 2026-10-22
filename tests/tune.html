@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SnipeCam Tuning</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0 auto; padding: 16px; max-width: 900px; background: #111; color: #eee; font: 15px/1.5 system-ui, sans-serif; }
+    button { min-height: 44px; padding: 10px 14px; margin: 4px 4px 4px 0; border: 1px solid #333; border-radius: 10px; background: #1c1c1e; color: #eee; font: inherit; }
+    table { border-collapse: collapse; margin: 8px 0; }
+    td, th { padding: 4px 10px; border-bottom: 1px solid #333; text-align: right; }
+    tr.pick td { background: #14532d; }
+    canvas { width: 100%; max-width: 860px; height: 220px; background: #000; border-radius: 8px; }
+    .muted { color: #9a9a9a; }
+    .same { color: #4ade80; } .diff { color: #f87171; }
+  </style>
+</head>
+<body>
+  <h1>Match threshold tuning</h1>
+  <p class="muted">
+    Compares every photo against every other. <b>Same-person</b> pairs should score high and <b>different-person</b> pairs low;
+    the threshold goes between them. Photos come from <code>tests/fixtures/</code>: <code>people/&lt;name&gt;/</code> = known people,
+    <code>strangers/</code> = non-members. Add your own to <code>people/&lt;name&gt;/</code>, then re-run <code>tools/fetch-fixtures.sh</code>.
+  </p>
+  <button id="btn-run" disabled>Loading detector…</button>
+  <div id="progress" class="muted"></div>
+  <div id="out"></div>
+  <script type="module">
+    import { initDetector, detect } from '../js/detector.js';
+    import { loadImageFile } from '../js/enroll.js';
+    import { DEFAULTS } from '../js/settings.js';
+    import { pairSimilarities, memberLevel, ratesAt, suggestThreshold, summary, histogram } from './tunelib.js';
+
+    const $ = (id) => document.getElementById(id);
+    const btn = $('btn-run');
+    const backend = await initDetector({ backend: 'webgpu', maxDetected: 10, minFacePx: 20 });
+    btn.textContent = 'Run on fixtures';
+    btn.disabled = false;
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const res = await fetch('fixtures/manifest.json');
+      if (!res.ok) { $('progress').textContent = 'No fixtures/manifest.json: run tools/fetch-fixtures.sh'; return; }
+      const files = await res.json();
+      const samples = [];
+      const skipped = [];
+      for (const [i, path] of files.entries()) {
+        $('progress').textContent = `Embedding ${i + 1} of ${files.length}: ${path}`;
+        const parts = path.split('/');
+        const person = parts[0] === 'people' ? parts[1] : null;
+        const blob = await (await fetch(`fixtures/${path}`)).blob();
+        const bmp = await loadImageFile(blob);
+        const faces = await detect(bmp, { tiles: 1 });
+        bmp.close();
+        const face = faces.sort((a, b) => b.box[2] * b.box[3] - a.box[2] * a.box[3])[0];
+        if (face?.embedding) samples.push({ person, path, embedding: face.embedding });
+        else skipped.push(path);
+      }
+      $('progress').textContent = `${samples.length} photos embedded (${backend})${skipped.length ? `; no face in: ${skipped.join(', ')}` : ''}`;
+      report(samples);
+      btn.disabled = false;
+    });
+
+    function report(samples) {
+      const pairs = memberLevel(samples, 3); // how the app matches: best of a member's enrolled photos
+      const photoPairs = pairSimilarities(samples);
+      const same = summary(pairs.same);
+      const diff = summary(pairs.diff);
+      const pick = suggestThreshold(pairs);
+      const people = new Set(samples.filter((s) => s.person).map((s) => s.person));
+      const photoPick = suggestThreshold(photoPairs);
+      const strangers = samples.filter((s) => !s.person).length;
+      const rows = [];
+      for (let t = 0.35; t <= 0.851; t += 0.05) rows.push(Math.round(t * 100) / 100);
+      if (!rows.includes(pick.threshold)) rows.push(pick.threshold);
+      rows.sort((a, b) => a - b);
+      const pct = (x) => `${(x * 100).toFixed(1)}%`;
+
+      // Hardest cases: most similar different-person pairs, least similar same-person pairs
+      const pairList = []; // photo-vs-photo, to spot bad photos
+      for (let i = 0; i < samples.length; i++) for (let j = i + 1; j < samples.length; j++) {
+        const a = samples[i], b = samples[j];
+        if (!a.person && !b.person) continue;
+        const sim = pairSimilarities([a, b]);
+        pairList.push({ a: a.path, b: b.path, same: a.person && a.person === b.person, s: (sim.same[0] ?? sim.diff[0]) });
+      }
+      const worstDiff = pairList.filter((p) => !p.same).sort((x, y) => y.s - x.s).slice(0, 5);
+      const worstSame = pairList.filter((p) => p.same).sort((x, y) => x.s - y.s).slice(0, 5);
+
+      $('out').innerHTML = `
+        <h2>Results</h2>
+        <p>${people.size} known people (${pairs.members} with 4+ photos: first 3 enrolled, rest used as probes), ${strangers} strangers.
+          Scores are each probe's <b>best</b> similarity to a member's enrolled photos, which is how the app matches.</p>
+        <p><span class="same">same person: ${same.n} probes, mean ${same.mean.toFixed(3)} (min ${same.min.toFixed(3)})</span> ·
+          <span class="diff">different person: ${diff.n} probes, mean ${diff.mean.toFixed(3)} (max ${diff.max.toFixed(3)})</span></p>
+        <canvas id="hist" width="1720" height="440"></canvas>
+        <h3>Suggested threshold: ${pick.threshold.toFixed(2)}</h3>
+        <p class="muted">Lowest threshold with ≤ 0.1% false matches (strangers vastly outnumber members, so a false match costs more than a miss).
+          Current setting: ${DEFAULTS.threshold}. Margin: keep ${DEFAULTS.margin} unless two members look alike.
+          (Single photo vs single photo would need ${photoPick.threshold.toFixed(2)}.)</p>
+        <table><tr><th>Threshold</th><th>Missed (member's own face)</th><th>False match (someone else)</th></tr>
+          ${rows.map((t) => { const r = ratesAt(t, pairs); return `<tr class="${t === pick.threshold ? 'pick' : ''}"><td>${t.toFixed(2)}</td><td>${pct(r.missRate)}</td><td>${pct(r.falseMatchRate)}</td></tr>`; }).join('')}
+        </table>
+        <h3>Hardest different-person pairs</h3>
+        <table>${worstDiff.map((p) => `<tr><td>${p.s.toFixed(3)}</td><td style="text-align:left">${p.a} ↔ ${p.b}</td></tr>`).join('')}</table>
+        <h3>Hardest same-person pairs</h3>
+        <table>${worstSame.map((p) => `<tr><td>${p.s.toFixed(3)}</td><td style="text-align:left">${p.a} ↔ ${p.b}</td></tr>`).join('')}</table>`;
+      drawHistogram($('hist'), pairs, pick.threshold);
+      window.__tune = { same, diff, pick, photoPick, people: people.size, strangers, rows: rows.map((t) => ({ t, ...ratesAt(t, pairs) })) };
+    }
+
+    function drawHistogram(canvas, pairs, threshold) {
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height, pad = 40;
+      const hs = histogram(pairs.same), hd = histogram(pairs.diff);
+      const norm = (counts) => { const n = counts.reduce((a, b) => a + b, 0) || 1; return counts.map((c) => c / n); };
+      const s = norm(hs.counts), d = norm(hd.counts);
+      const max = Math.max(...s, ...d) || 1;
+      const bw = (W - 2 * pad) / s.length;
+      const x = (v) => pad + ((v - hs.lo) / (hs.hi - hs.lo)) * (W - 2 * pad);
+      ctx.font = '22px system-ui';
+      [[d, '#f87171'], [s, '#4ade80']].forEach(([vals, color]) => {
+        ctx.fillStyle = color + 'aa';
+        vals.forEach((v, i) => { const h = (v / max) * (H - 2 * pad); ctx.fillRect(pad + i * bw + 2, H - pad - h, bw - 4, h); });
+      });
+      ctx.fillStyle = '#9a9a9a';
+      for (let v = -0.2; v <= 1.001; v += 0.2) ctx.fillText(v.toFixed(1), x(v) - 16, H - 10);
+      ctx.strokeStyle = '#fff';
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath(); ctx.moveTo(x(threshold), 10); ctx.lineTo(x(threshold), H - pad); ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(`threshold ${threshold.toFixed(2)}`, x(threshold) + 8, 30);
+    }
+  </script>
+</body>
+</html>

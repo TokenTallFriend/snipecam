@@ -37,6 +37,24 @@ async function newPage(opts = {}) {
   return page;
 }
 
+
+const FIX = fileURLToPath(new URL('../tests/fixtures/', import.meta.url));
+
+// Adds a member through the Roster UI. Returns the toast text.
+async function addMember(p, name, slack, photos) {
+  await p.tap('[data-go="roster"]');
+  await p.waitForSelector('[data-view="roster"]:not([hidden])');
+  await p.tap('#btn-add-member');
+  await p.fill('#member-name', name);
+  await p.fill('#member-slack', slack);
+  await p.setInputFiles('#member-photos', photos.map((f) => FIX + f));
+  await p.waitForFunction(() => /photos? added/.test(document.getElementById('toast').textContent), null, { timeout: 120000 });
+  const toast = await p.textContent('#toast');
+  await p.tap('#btn-member-save');
+  await p.waitForSelector('[data-view="roster"]:not([hidden])');
+  return toast;
+}
+
 const state = (page) => page.textContent('#status-state');
 const shot = (page, name) => shotDir && page.screenshot({ path: `${shotDir}/${engine}-${name}.png` });
 
@@ -106,10 +124,9 @@ await check('T-APP-6', 'Log panel opens from Settings and shows camera line', as
   await page.tap('.panel:not([hidden]) [data-go="watch"]');
 });
 
-await check('T-APP-11', 'Watch loop runs: status shows fps, detect time, faces, backend', async () => {
+await check('T-APP-11', 'Watch loop runs: status shows fps, detect time, faces; backend logged', async () => {
   await page.waitForFunction(() => /fps.*ms.*faces \d+/.test(document.getElementById('status-detail').textContent), null, { timeout: 30000 });
-  const detail = await page.textContent('#status-detail');
-  expect(/webgl|webgpu/.test(detail), `no backend in "${detail}"`);
+  expect(/Detector ready: (webgl|webgpu)/.test(await page.textContent('#log .log-body')), 'backend missing from log');
 });
 
 await check('T-MAIN-2', 'Loop never exceeds processFps (no overlapping ticks)', async () => {
@@ -132,7 +149,7 @@ await check('T-APP-8', 'Settings persist across reload; Reset restores defaults'
   await page.tap('[data-go="settings"]');
   await page.tap('#btn-reset');
   const r = await page.evaluate(() => JSON.parse(localStorage.getItem('snipecam.settings')));
-  expect(r.threshold === 0.55 && r.deviceId === null, `after reset: ${JSON.stringify(r)}`);
+  expect(r.threshold === 0.64 && r.deviceId === null, `after reset: ${JSON.stringify(r)}`);
 });
 
 await check('T-APP-9', 'No horizontal scroll in any view at phone width', async () => {
@@ -170,6 +187,48 @@ await check('T-CAM-4', 'Permission denied → readable toast, back to Ready, no 
   await shot(denied, '6-denied');
 });
 
+
+// --- Roster (any engine) ---
+const rp = await newPage();
+await rp.goto(`${server.base}/`);
+await rp.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+await check('T-APP-14', 'Add member from photos: faces used, bad photo skipped with reason, saved to list', async () => {
+  const toast = await addMember(rp, 'Person B', ' @person b', ['people/emotions-b/1.jpg', 'people/emotions-b/2.jpg', 'blank.png', 'people/emotions-b/3.jpg']);
+  expect(/3 of 4 photos added/.test(toast), `toast "${toast}"`);
+  const row = await rp.textContent('#roster-list');
+  expect(row.includes('Person B') && row.includes('@personb · 3 photos'), `roster row "${row}"`);
+  await shot(rp, '8-roster');
+});
+await check('T-APP-15', 'Editor shows skipped photo reason and thumbnails', async () => {
+  await rp.tap('.member-row');
+  await rp.waitForSelector('[data-view="member"]:not([hidden])');
+  expect((await rp.$$('#member-photo-grid .photo')).length === 3, 'expected 3 thumbnails');
+  await rp.setInputFiles('#member-photos', [FIX + 'blank.png']);
+  await rp.waitForFunction(() => document.getElementById('member-skipped').textContent.includes('No face found'));
+  await shot(rp, '9-editor');
+  await rp.tap('#btn-member-back');
+});
+await check('T-APP-16', 'Export downloads roster; import into a fresh device restores it', async () => {
+  const [download] = await Promise.all([rp.waitForEvent('download'), rp.tap('#btn-export')]);
+  expect(/^snipecam-roster-\d{4}-\d{2}-\d{2}\.snipedb\.json$/.test(download.suggestedFilename()), download.suggestedFilename());
+  const file = await download.path();
+  const fresh = await newPage();
+  await fresh.goto(`${server.base}/`);
+  await fresh.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+  await fresh.tap('[data-go="roster"]');
+  await fresh.setInputFiles('#import-file', file);
+  await fresh.waitForFunction(() => /Imported: 1 added/.test(document.getElementById('toast').textContent));
+  expect((await fresh.textContent('#roster-list')).includes('Person B'), 'imported member missing');
+  await fresh.context().close();
+});
+await check('T-APP-17', 'Delete member (after confirm) removes them', async () => {
+  rp.once('dialog', (d) => d.accept());
+  await rp.tap('.member-row');
+  await rp.tap('#btn-member-delete');
+  await rp.waitForFunction(() => document.getElementById('roster-list').textContent.includes('No members yet'));
+});
+await rp.context().close();
+
 // --- Idle rate: no faces → drops to idleFps after idleAfterSec ---
 const idlePage = await newPage();
 await idlePage.addInitScript(() => localStorage.setItem('snipecam.settings', JSON.stringify({ idleAfterSec: 5, idleFps: 0.5 })));
@@ -192,6 +251,7 @@ if (engine === 'chromium' && existsSync(faceCam)) {
   fp.setDefaultTimeout(60000);
   await fp.addInitScript(() => localStorage.setItem('snipecam.settings', JSON.stringify({ debugFaces: true })));
   await fp.goto(`${server.base}/?autostart`);
+  await fp.waitForFunction(() => document.getElementById('status-state').textContent === 'Watching');
   await check('T-APP-12', 'Face on camera → detected; debug overlay draws its box', async () => {
     await fp.waitForFunction(() => /faces [1-9]/.test(document.getElementById('status-detail').textContent), null, { timeout: 60000 });
     const drawn = await fp.evaluate(() => {
@@ -202,6 +262,14 @@ if (engine === 'chromium' && existsSync(faceCam)) {
     });
     expect(drawn, 'overlay is empty');
     await shot(fp, '7-face-debug');
+  });
+  await check('T-APP-18', 'Enrolled member on camera → green name label; stranger mode shows nothing', async () => {
+    // Camera shows emotions-a/1.jpg; enroll the same person from different photos
+    await addMember(fp, 'Person A', 'persona', ['people/emotions-a/2.jpg', 'people/emotions-a/3.jpg', 'people/emotions-a/4.jpg']);
+    await fp.tap('.panel:not([hidden]) [data-go="watch"]');
+    await fp.waitForFunction(() => document.getElementById('overlay').dataset.labels === 'Person A', null, { timeout: 60000 });
+    expect(/known 1/.test(await fp.textContent('#status-detail')), 'status lacks "known 1"');
+    await shot(fp, '10-member-label');
   });
   await faceBrowser.close();
 } else if (engine === 'chromium') {

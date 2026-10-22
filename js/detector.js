@@ -65,8 +65,17 @@ const DESCRIBE = { face: { mesh: { enabled: true }, description: { enabled: true
 // Stage 1 (cheap): find face boxes on the full frame, plus an n×n grid of zoomed tiles when tiles > 1,
 //   because the detector shrinks its input to 256 px and misses distant faces in a full 1080p frame.
 // Stage 2: for each unique face, run mesh + embedding once on an enlarged crop around it.
-export async function detect(input, { tiles = 1 } = {}) {
-  if (!human) throw new Error('detector not initialized');
+export function detect(input, opts) {
+  // Serialize calls: the watch loop and enrollment share one model instance.
+  const run = queue.then(() => detectNow(input, opts));
+  queue = run.catch(() => {});
+  return run;
+}
+
+let queue = Promise.resolve();
+
+async function detectNow(input, { tiles = 1 } = {}) {
+  if (!human) throw new Error('Face models are still loading');
   const found = await findFaces(input, tiles);
   const faces = [];
   for (const f of found) faces.push(await describe(input, f));
