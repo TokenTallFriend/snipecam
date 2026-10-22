@@ -113,7 +113,7 @@ Settings  { mode: 'tripod', processFps: 2, idleFps: 0.5, idleAfterSec: 60,
             threshold: 0.55, margin: 0.05, minHits: 2, gapSec: 5, maxDetected: 10,
             minFacePx: 40, minCandidateFacePx: 60, facingMode: 'environment',
             width: 1920, height: 1080, zoom: 1 /* 1|1.5|2 */, alert: 'off' /* off|sound */,
-            reminderAt: '23:00', showLabels: true, dim: false, backend: 'webgpu',
+            reminderAt: '23:00', showLabels: true, backend: 'webgpu', deviceId: null,
             rehearsals: [] /* P6: [{weekday, start:'19:00', end:'21:00'}] */ }
 ```
 
@@ -224,11 +224,12 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | `loadSettings(storage = localStorage)` | Merge over defaults; tolerate missing/corrupt/throwing storage |
 | `saveSettings(s, storage = localStorage)` | Persist; swallow exceptions |
 
-- [ ] T-SET-1 [U] Empty storage → `DEFAULTS`
-- [ ] T-SET-2 [U] Corrupt JSON → `DEFAULTS`, no throw
-- [ ] T-SET-3 [U] Out-of-range clamped (threshold 5 → 1, processFps 0 → 0.2)
-- [ ] T-SET-4 [U] Missing new keys get defaults; unknown mode → tripod
-- [ ] T-SET-5 [U] Throwing storage → defaults; save doesn't throw
+- [x] T-SET-1 [U] Empty storage → `DEFAULTS`
+- [x] T-SET-2 [U] Corrupt JSON → `DEFAULTS`, no throw
+- [x] T-SET-3 [U] Out-of-range clamped (threshold 5 → 1, processFps 0 → 0.2)
+- [x] T-SET-4 [U] Missing new keys get defaults; unknown mode → tripod
+- [x] T-SET-5 [U] Throwing storage → defaults; save doesn't throw
+- [x] T-SET-6 [U] Save → load round-trips (also T-SET-3b: wrong types → defaults)
 
 ### 7.2 `rules.js` [pure]
 | Function | Purpose |
@@ -271,9 +272,10 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | `log(msg, level='info')` | Timestamped line, cap 200 |
 | `toggleLog(show)` | Show/hide |
 
-- [ ] T-LOG-1 [B] Thrown error in setTimeout appears
-- [ ] T-LOG-2 [B] Rejected promise appears
-- [ ] T-LOG-3 [B] >200 lines → oldest dropped
+- [x] T-LOG-1 [B] Thrown error in setTimeout appears
+- [x] T-LOG-2 [B] Rejected promise appears
+- [x] T-LOG-3 [B] >200 lines → oldest dropped
+- [x] T-LOG-5 [B] console.warn captured at warn level
 - [ ] T-LOG-4 [M] iPhone: forced error visible on screen
 
 ### 7.5 `camera.js`
@@ -286,8 +288,9 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [ ] T-CAM-1 [M] Laptop: webcam shows; actual resolution in status
 - [ ] T-CAM-2 [M] iPhone: rear camera; ≥ 1920×1080
 - [ ] T-CAM-3 [M] Stop → camera indicator off
-- [ ] T-CAM-4 [M] Permission denied → clear message, no crash
+- [x] T-CAM-4 [B] Permission denied → clear message, no crash (automated in `test:app`)
 - [ ] T-CAM-5 [M] Camera picker switches devices
+- [x] T-CAM-6 [U] `cameraErrorMessage` maps each error name to readable text
 
 ### 7.6 `device.js`
 | Function | Purpose |
@@ -295,7 +298,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | `keepAwake(on)` | Wake Lock; fallback NoSleep video; re-acquire on `visibilitychange` |
 | `unlockAudio()` | Resume AudioContext (inside a tap) |
 | `beep(freq=880, ms=150)` | Oscillator beep |
-| `setDim(on, statusText)` | Black overlay; video keeps playing |
+| `setDim(on, statusText)` | Black overlay; video keeps playing (runtime state, not a setting) |
 
 - [ ] T-DEV-1 [M] iPhone Home Screen app: no auto-lock over 30 min (Auto-Lock set to 30 s to prove it)
 - [ ] T-DEV-2 [M] Same with Low Power Mode (record: ____)
@@ -420,8 +423,8 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | `renderRoster(members, locks, handlers)` / `renderEnrollResults(results)` | Roster + lock actions |
 | `renderSettings(s, onChange)` | Settings |
 
-- [ ] T-UI-1 [U] `mapBox` identity when aspects match
-- [ ] T-UI-2 [U] `mapBox` 16:9 in 9:16 offsets x correctly
+- [x] T-UI-1 [U] `mapBox` identity when aspects match
+- [x] T-UI-2 [U] `mapBox` 16:9 in 9:16 offsets x correctly
 - [ ] T-UI-3 [M] Labels on members only; aligned; strangers nothing
 - [ ] T-UI-4 [M] Buttons ≥ 44 px; no horizontal scroll
 - [ ] T-UI-5 [M] Change name → candidate moves to new member (1/day respected)
@@ -445,6 +448,18 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [ ] T-MAIN-4 [M] Stop mid-session → candidate still produced
 - [ ] T-MAIN-5 [M] Clock faked to 23:59:30 → candidates purged after midnight; locks reset
 - [ ] T-MAIN-6 [M] Clock faked to 23:00 with pending → banner + beep
+
+### 7.16 App-level automated checks (`npm run test:app`, Playwright, fake camera, iPhone-size viewport)
+- [x] T-APP-1 Boots to Ready with no errors
+- [x] T-APP-2 Start → Watching; live video; resolution in status
+- [x] T-APP-3 Dim covers screen; video keeps playing underneath; tap wakes
+- [x] T-APP-4 Settings form renders all groups; edits validated + persisted
+- [x] T-APP-5 Camera setting change restarts camera, keeps watching
+- [x] T-APP-6 Log panel opens; shows camera line
+- [x] T-APP-7 Stop → Ready; camera released
+- [x] T-APP-8 Settings persist across reload; Reset restores defaults
+- [x] T-APP-9 No horizontal scroll in any view at 393 px width
+- [x] T-APP-10 All visible buttons ≥ 44 px
 
 ---
 
@@ -485,7 +500,9 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 ## 10. Dev Workflow
 
 - **Laptop:** `./tools/serve.sh` → `http://localhost:8000`, `/tests/browser.html`, `/tests/bench.html`, `/tests/tune.html`.
-- **Unit tests:** `npm test`.
+- **Unit tests:** `npm test` (Node).
+- **Browser tests:** `npm run test:browser` (tests/browser.html in Chromium, Firefox, WebKit via Playwright; dev-only, not deployed).
+- **App checks:** `npm run test:app` (drives index.html with a fake camera; `SHOT_DIR=… ` saves screenshots).
 - **iPhone:** `git push` → Pages (~1 min) → reload. Debug via on-screen log. Bump SW cache version each deploy.
 - **Done per function:** all its tests `[x]` here, committed.
 

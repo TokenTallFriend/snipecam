@@ -3,32 +3,67 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="SnipeCam">
   <title>SnipeCam</title>
-  <style>
-    :root { color-scheme: dark; }
-    body { margin: 0; padding: 16px; background: #000; color: #eee; font: 16px/1.5 system-ui, sans-serif; }
-    h1 { margin: 0 0 12px; }
-    li { margin: 4px 0; }
-    .ok { color: #4ade80; } .bad { color: #f87171; }
-  </style>
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <h1>SnipeCam</h1>
-  <p>P0 placeholder. Environment check:</p>
-  <ul id="checks"></ul>
-  <script type="module">
-    const checks = {
-      'Secure context (HTTPS)': window.isSecureContext,
-      'Camera API': !!navigator.mediaDevices?.getUserMedia,
-      'WebGPU': 'gpu' in navigator,
-      'WebGL2': !!document.createElement('canvas').getContext('webgl2'),
-      'Wake Lock': 'wakeLock' in navigator,
-      'Web Share (files)': !!navigator.canShare?.({ files: [new File([''], 'x.jpg', { type: 'image/jpeg' })] }),
-      'IndexedDB': 'indexedDB' in window,
-    };
-    document.getElementById('checks').innerHTML = Object.entries(checks)
-      .map(([name, ok]) => `<li class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✗'} ${name}</li>`)
-      .join('');
-  </script>
+  <!-- Watch: always rendered; other views are panels drawn on top of it -->
+  <section data-view="watch" id="view-watch">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="overlay"></canvas>
+    <header class="topbar">
+      <div class="status">
+        <span id="status-state">Loading…</span>
+        <span id="status-detail"></span>
+      </div>
+      <nav>
+        <button data-go="inbox" aria-label="Inbox">📥<span id="badge" class="badge" hidden>0</span></button>
+        <button data-go="roster" aria-label="Roster">👥</button>
+        <button data-go="settings" aria-label="Settings">⚙︎</button>
+      </nav>
+    </header>
+    <p id="watch-hint" class="hint">Tap <b>Start</b> to begin watching.</p>
+    <footer class="controls">
+      <button id="btn-start" class="primary" disabled>Start</button>
+      <button id="btn-dim" disabled>Dim</button>
+    </footer>
+  </section>
+
+  <section data-view="inbox" class="panel" hidden>
+    <header class="pagebar"><button data-go="watch">‹ Back</button><h2>Inbox</h2></header>
+    <p class="empty">Caught photos will appear here (Phase 5).</p>
+  </section>
+
+  <section data-view="roster" class="panel" hidden>
+    <header class="pagebar"><button data-go="watch">‹ Back</button><h2>Roster</h2></header>
+    <p class="empty">Club members will be managed here (Phase 3).</p>
+  </section>
+
+  <section data-view="settings" class="panel" hidden>
+    <header class="pagebar"><button data-go="watch">‹ Back</button><h2>Settings</h2></header>
+    <form id="settings-form" onsubmit="return false"></form>
+    <div class="settings-actions">
+      <button id="btn-log">Show log</button>
+      <button id="btn-reset">Reset to defaults</button>
+    </div>
+    <p class="version">SnipeCam <span id="version"></span></p>
+  </section>
+
+  <div id="dim" hidden><p id="dim-text"></p><p class="dim-hint">Tap to wake</p></div>
+
+  <div id="progress" hidden><div class="progress-track"><div class="progress-bar"></div></div><span class="progress-label"></span></div>
+
+  <div id="log" hidden>
+    <div class="log-head"><b>Log</b><button id="btn-log-close" aria-label="Close log">✕</button></div>
+    <div class="log-body"></div>
+  </div>
+
+  <div id="toast" role="status" hidden></div>
+
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>

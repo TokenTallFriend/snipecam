@@ -6,6 +6,11 @@
   "description": "On-device face recognition for the club sniping game",
   "scripts": {
     "test": "node --test \"tests/unit/**/*.test.js\"",
-    "serve": "sh tools/serve.sh"
+    "serve": "sh tools/serve.sh",
+    "test:browser": "node tools/test-browser.mjs",
+    "test:app": "node tools/test-app.mjs chromium && node tools/test-app.mjs firefox"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1"
   }
 }
