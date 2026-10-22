@@ -123,6 +123,16 @@ fieldset .field:last-of-type { border-radius: 0 0 10px 10px; border-bottom: 0; }
 .settings-actions button { flex: 1; }
 .version { color: var(--muted); font-size: 13px; text-align: center; }
 
+/* Rehearsal schedule */
+.rehearsal { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+.rehearsal select, .rehearsal input {
+  min-height: 44px; min-width: 0; padding: 4px 6px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--text); font: inherit; font-size: 16px;
+}
+.rehearsal select { flex: 1.2; }
+.rehearsal input { flex: 1; }
+.rehearsal button { flex-shrink: 0; padding: 0; }
+
 /* Roster */
 .list { margin-top: 16px; }
 .member-row {

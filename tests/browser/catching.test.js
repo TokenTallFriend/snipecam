@@ -133,15 +133,30 @@ test('T-MOD-4', 'two members in the same frame → a candidate each, both listin
   }
 });
 
-test('T-MOD-5', 'locked mid-sighting → that sighting is discarded', async () => {
+test('T-MOD-5', 'locked mid-sighting → nothing more is saved for them (even a better photo)', async () => {
   await db.clearAll();
   const ctx = fakeCtx();
   await tripod.start(ctx);
   await play(ctx, [[seen('a')], [seen('a')]]);
+  const before = ctx.candidates.length; // already saved at confirmation; Roster/Inbox delete it when they lock
   await db.lock(['a'], dayKey(NOON), 'manual');
   await tripod.onLocksChanged(ctx);
-  await play(ctx, [[seen('a')], ...Array(12).fill([])]);
-  assert.equal(ctx.candidates.length, 0);
+  await play(ctx, [[seen('a', 0.9, 200)], [seen('a', 0.9, 200)], ...Array(12).fill([])]);
+  assert.equal(ctx.candidates.length, before);
+});
+
+test('T-MOD-9', 'photo is saved as soon as the sighting is confirmed (person still in view), then upgraded', async () => {
+  await db.clearAll();
+  const ctx = fakeCtx();
+  await tripod.start(ctx);
+  await play(ctx, [[seen('a', 0.75, 80)], [seen('a', 0.75, 80)]]);
+  const first = await db.getCandidate('a', dayKey(NOON));
+  assert.ok(first, 'not saved while still in view');
+  await play(ctx, [[seen('a', 0.75, 200)]]); // closer → better photo
+  const upgraded = await db.getCandidate('a', dayKey(NOON));
+  assert.equal(upgraded.id, first.id);
+  assert.ok(upgraded.quality > first.quality, 'not upgraded');
+  assert.equal((await db.listCandidates()).length, 1);
 });
 
 test('T-MOD-7', 'faces smaller than minCandidateFacePx never become candidates (rule 3)', async () => {

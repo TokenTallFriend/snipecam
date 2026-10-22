@@ -239,3 +239,25 @@ export function renderShareStep({ card, index, total, tagLine, flagged }) {
 export function renderMemberToday(statusText) {
   $('member-today-status').textContent = statusText;
 }
+
+// ---------- Rehearsal schedule (Settings) ----------
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+// list: [{ weekday, start, end }]; onChange(newList) on every edit.
+export function renderRehearsals(list, onChange) {
+  const box = $('rehearsal-list');
+  box.replaceChildren();
+  list.forEach((r, i) => {
+    const update = (patch) => onChange(list.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+    const day = el('select', { ariaLabel: 'Day' }, ...WEEKDAYS.map((d, n) => new Option(d, n, false, n === r.weekday)));
+    day.addEventListener('change', () => update({ weekday: Number(day.value) }));
+    const start = el('input', { type: 'time', value: r.start, ariaLabel: 'Start' });
+    start.addEventListener('change', () => update({ start: start.value }));
+    const end = el('input', { type: 'time', value: r.end, ariaLabel: 'End' });
+    end.addEventListener('change', () => update({ end: end.value }));
+    const remove = el('button', { textContent: '✕', ariaLabel: 'Remove rehearsal' });
+    remove.addEventListener('click', () => onChange(list.filter((_, j) => j !== i)));
+    box.append(el('div', { className: 'rehearsal' }, day, start, end, remove));
+  });
+}

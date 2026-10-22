@@ -14,9 +14,11 @@ async function loadLocks(ctx) {
   locked = new Set((await ctx.db.listLocks(day)).map((l) => l.memberId));
 }
 
-// Turns finished sightings into candidates (or discards them), per the game rules.
-async function handleEnded(ctx, ended) {
-  for (const e of ended) {
+// Saves sightings as candidates (or discards them), per the game rules. Called with sightings as soon as they're
+// confirmed and whenever their best photo improves (so the Inbox updates while the person is still in view),
+// and once more when they end.
+async function handleSightings(ctx, sightings) {
+  for (const e of sightings) {
     try {
       const sightingDay = dayKey(e.end);
       const existing = await ctx.db.getCandidate(e.memberId, sightingDay);
@@ -72,15 +74,15 @@ export default {
         frame: bitmap,
         meta: { name: r.match.member.name, similarity: r.match.similarity, box: r.face.box, inFrame },
       }));
-    const { confirmed, ended } = tracker.update(hits, ctx.now());
+    const { confirmed, improved, ended } = tracker.update(hits, ctx.now());
     if (!hits.length) bitmap.close(); // the tracker only owns frames it was given
     for (const id of confirmed) ctx.onConfirmed(id);
-    await handleEnded(ctx, ended);
+    await handleSightings(ctx, [...improved, ...ended]);
   },
 
   async stop(ctx) {
     if (!tracker) return;
-    await handleEnded(ctx, tracker.flush());
+    await handleSightings(ctx, tracker.flush());
     tracker.reset();
   },
 

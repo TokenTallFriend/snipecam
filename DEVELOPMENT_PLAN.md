@@ -23,6 +23,8 @@ On-device, in-browser face recognition for the club sniping game. **Passive (tri
 | Backend | `webgpu`, fallback `webgl`. |
 | Hosting | GitHub Pages (public repo, HTTPS). Dev on `localhost`. |
 | Storage | IndexedDB per device: roster, candidates (JPEG), daily lock log. Settings in localStorage. **No face data in the repo.** |
+| Slack tags | The iOS share sheet sends the photo only (with text, Slack took a link instead). Tags are copied to the clipboard, but pasted `@handle` text isn't a real Slack mention: that needs Slack's @-picker or the Slack API with member IDs → P7 (Slack app). **Save** is the main path for now. |
+| Offline | `sw.js`: app files network-first (fresh when online, cached offline); pinned face library cache-first; models in IndexedDB (by the library). |
 | Out of scope (v1) | Slack auto-post, scoreboard, background operation (iOS forbids), other modes. |
 
 ---
@@ -56,7 +58,7 @@ Source: *Sniping Rules (Updated Spring 2026)*. Game logic lives in `js/rules.js`
 /
 ├── index.html              App shell: views as <section>s
 ├── manifest.json           PWA manifest (Add to Home Screen, fullscreen)
-├── sw.js                   Service worker: cache app + models (P6)
+├── sw.js                   Service worker: offline app shell + face library
 ├── package.json            {"type":"module"}; "test": "node --test tests/unit/"
 ├── .gitignore              tests/fixtures/, *.snipedb.json, node_modules/
 ├── README.md
@@ -99,7 +101,8 @@ Source: *Sniping Rules (Updated Spring 2026)*. Game logic lives in `js/rules.js`
     ├── fetch-fixtures.sh   Sample faces (Human repo, MIT) + fake-camera video → tests/fixtures/
     ├── testlib.mjs         Playwright helpers (throwaway server, engines with fake camera)
     ├── test-browser.mjs    Runs tests/browser.html in Chromium/Firefox/WebKit
-    └── test-app.mjs        Drives index.html end to end with a fake camera
+    ├── test-app.mjs        Drives index.html end to end with a fake camera
+    └── make-icons.mjs      Renders icons/ from an inline SVG
 ```
 
 **Rule:** `[pure]` modules never touch DOM/`window` at import, so Node can test them.
@@ -264,6 +267,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-RUL-7 [U] `msUntilDeadline` at 23:00 = 3 600 000
 - [x] T-RUL-8 [U] `inRehearsalWindow` true at start−30, end+30; false at start−31; weekday respected
 - [x] T-RUL-9 [U] `reminderDue` once per day after `reminderAt`
+- [x] T-RUL-10 [B] Rehearsal schedule edited in Settings; catches inside ±30 min get ⚠ in Inbox, outside don't
 
 ### 7.3 `modes/index.js`, `modes/tripod.js`
 | Function | Purpose |
@@ -282,6 +286,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-MOD-6 [B] Second, worse pass same day → still one candidate (best kept)
 - [x] T-MOD-7 [B] Faces < `minCandidateFacePx` never become candidates (rule 3)
 - [x] T-MOD-8 [B] Stop mid-sighting flushes it into a candidate
+- [x] T-MOD-9 [B] Candidate saved at confirmation (still in view), then upgraded in place
 
 ### 7.4 `log.js`
 | Function | Purpose |
@@ -352,6 +357,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-DET-12 [B] Distant group (50% in 1080p): 2×2 finds more than full frame (baseline full 3 → 2×2 10)
 - [x] T-DET-13 [B] Tiled detect time recorded (headless software GL; informational)
 - [x] T-DET-14 [U] `expandRect` centered, clamped, capped
+- [x] T-SW-1 [U] `sw.js` offline list covers every js/ module and every file index.html links
 - [x] T-LOOP-1..4 [U] Full rate with faces; idle rate after `idleAfterSec`; delay ≥ 0; rolling stats
 - [x] T-CAP-3 [U] `cropRect` zoom 2 → centered half-size crop
 
@@ -389,6 +395,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-TRK-5 [U] Two members independent; shared frame disposed only after both release
 - [x] T-TRK-6 [U] `drop`, `flush`, `reset` behave
 - [x] T-TRK-7 [U] 400-tick random stream: every frame disposed exactly once (no leaks)
+- [x] T-TRK-8 [U] `improved` reports best frame at confirmation and on each improvement (photo saved while person still in view)
 
 ### 7.10 `capture.js`
 | Function | Purpose |
@@ -454,8 +461,8 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 
 - [x] T-SHR-1 [U] `tagText` handles/no handles/empty
 - [x] T-SHR-2 [U] `snipeFilename` format, padded, slugged
-- [x] T-SHR-3 [B] Share 3 selected (fake iPhone sheet): 2 posts, 1 photo each, Alice's photo tags @alice @bob, Bob's own photo skipped, all 3 locked `shared`, badge clears. **Repeat on iPhone into Slack: ____**
-- [ ] T-SHR-4 [M] Tags pasteable in Slack after each share
+- [x] T-SHR-3 [B] Share 3 selected (fake iPhone sheet): 2 posts, 1 photo each, photo only (no text), Alice's photo tags @alice @bob, Bob's own photo skipped, all 3 locked `shared`, badge clears. iPhone: photo reached Slack after P5.1 fix; tags must be typed (see §1 Slack tags)
+- [x] T-SHR-4 [M] Tags paste as plain text, not mentions → P7
 - [x] T-SHR-5 [B] Laptop: Share downloads `…-cara.jpg`, copies tags, locks `saved`
 - [x] T-SHR-6 [B] Cancel → candidate stays, nobody locked
 - [x] T-SHR-7 [B] Save selected → one sheet with 3 photos; locked `saved`
@@ -517,6 +524,10 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-APP-18 Enrolled member on camera → green name label, `known 1`; strangers draw nothing
 - [x] T-APP-19 Inbox lists catches, all preselected, countdown, "with Bob" on a shared photo
 - [x] T-APP-20 Dismiss selected removes catches without locking
+- [x] T-APP-21 Inbox updates live on a new catch; replaced (better) photo shows
+- [x] T-APP-22 Member stays in view → badge 1 without stopping the camera (P6 fix: was only on stop)
+- [x] T-APP-23 Manifest (standalone, start URL, 2 icons) + iOS icon served
+- [x] T-APP-24 Works offline after first load (Chromium: service worker + cached models)
 
 ---
 
@@ -552,7 +563,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | **P3 Recognition** | `matcher.js`, `db.js` (members), `enroll.js`, Roster, `tune.html`, labels | T-MAT, T-DB-1..5, T-ENR, T-TUNE-1, T-UI-3 |
 | **P4 Catching** | `rules.js`, `tracker.js`, `capture.js`, `modes/`, `db.js` (candidates, locks, purge), dim, clock | T-RUL, T-TRK, T-CAP, T-MOD, T-DB-6..9, T-DEV-4, T-E2E-1..6, T-MAIN-4/5/6 |
 | **P5 Inbox + Share** | `share.js`, Inbox, Roster lock actions | T-SHR, T-UI-5/6, T-E2E-10 |
-| **P6 Polish** | manifest, icons, `sw.js`, zoom, export/import UI, rehearsal flag | T-E2E-7/8/9/11, T-MAIN-1/3, T-RUL-8 |
+| **P6 Polish** | manifest, icons, `sw.js`, rehearsal schedule; fixes: live save while in view, live Inbox, share photo-only (zoom + export/import were built in P1/P3) | T-APP-21..24, T-RUL-10, T-SW-1; device: T-E2E-7/8/9/11, T-MAIN-3 |
 | **P7 Optional** | Pi watcher, Slack auto-post, more modes | Separate plan |
 
 ---

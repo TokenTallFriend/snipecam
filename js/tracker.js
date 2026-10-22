@@ -5,8 +5,11 @@
 // frame is held. Frames are opaque objects shared between members in the same tick, so the tracker
 // reference-counts them and calls onDispose(frame) once nothing holds a frame any more.
 //
-// Ownership: every frame passed to update() belongs to the tracker. Each `ended` entry hands one reference
-// to the caller, who must call release(frame) when done with it.
+// Once a session is confirmed, `improved` reports its best frame whenever it gets better (including at
+// confirmation), so a photo can be saved while the person is still in view.
+//
+// Ownership: every frame passed to update() belongs to the tracker. Each `ended` and `improved` entry hands
+// one reference to the caller, who must call release(frame) when done with it.
 
 export function createTracker({ minHits, gapSec, onDispose }) {
   const gapMs = gapSec * 1000;
@@ -38,6 +41,7 @@ export function createTracker({ minHits, gapSec, onDispose }) {
     update(hits, now) {
       const confirmed = [];
       const ended = [];
+      const changed = new Set(); // confirmed sessions whose best frame changed this tick
       for (const hit of hits) {
         let s = sessions.get(hit.memberId);
         if (s && now - s.last > gapMs) {
@@ -54,11 +58,19 @@ export function createTracker({ minHits, gapSec, onDispose }) {
           retain(hit.frame);
           if (s.best) release(s.best.frame);
           s.best = { frame: hit.frame, quality: hit.quality, meta: hit.meta };
+          if (s.confirmed) changed.add(hit.memberId);
         }
         if (!s.confirmed && s.hits >= minHits) {
           s.confirmed = true;
           confirmed.push(hit.memberId);
+          changed.add(hit.memberId);
         }
+      }
+      const improved = [];
+      for (const memberId of changed) {
+        const s = sessions.get(memberId);
+        retain(s.best.frame);
+        improved.push({ memberId, frame: s.best.frame, quality: s.best.quality, meta: s.best.meta, hits: s.hits, start: s.start, end: s.last });
       }
       for (const [memberId, s] of sessions) {
         if (now - s.last > gapMs) end(memberId, s, ended);
@@ -67,7 +79,7 @@ export function createTracker({ minHits, gapSec, onDispose }) {
       for (const frame of new Set(hits.map((h) => h.frame))) {
         if (!refs.has(frame)) onDispose(frame);
       }
-      return { confirmed, ended };
+      return { confirmed, improved, ended };
     },
 
     release,

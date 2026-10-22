@@ -470,6 +470,71 @@ await check('T-SHR-5', 'Laptop (no share sheet): Share downloads the photo and c
 });
 await lp.context().close();
 
+
+// --- P6: home-screen app, rehearsal warning, offline ---
+const hp = await newPage();
+await hp.addInitScript(fakeIphoneShare);
+await hp.goto(`${server.base}/`);
+await hp.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+await check('T-APP-23', 'Home-screen app: manifest (standalone, start URL, icons) and iOS icon are served', async () => {
+  const r = await hp.evaluate(async () => {
+    const m = await (await fetch(document.querySelector('link[rel=manifest]').href)).json();
+    const ok = async (u) => (await fetch(u)).ok;
+    return {
+      m,
+      icons: await Promise.all(m.icons.map((i) => ok(i.src))),
+      apple: await ok(document.querySelector('link[rel=apple-touch-icon]').href),
+    };
+  });
+  expect(r.m.display === 'standalone' && r.m.start_url === './' && r.m.icons.length === 2, JSON.stringify(r.m));
+  expect(r.icons.every(Boolean) && r.apple, 'an icon is missing');
+});
+await check('T-RUL-10', 'Rehearsal schedule in Settings → catches during the window get a ⚠ in the Inbox', async () => {
+  await seedInbox(hp);
+  const d = new Date();
+  const hm = (t) => `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+  await hp.tap('[data-go="settings"]');
+  await hp.tap('#btn-add-rehearsal');
+  await hp.selectOption('#rehearsal-list .rehearsal select', String(d.getDay()));
+  await hp.fill('#rehearsal-list input[aria-label="Start"]', hm(new Date(d.getTime() + 60 * 60000)));
+  await hp.dispatchEvent('#rehearsal-list input[aria-label="Start"]', 'change');
+  await hp.fill('#rehearsal-list input[aria-label="End"]', hm(new Date(d.getTime() + 90 * 60000)));
+  await hp.dispatchEvent('#rehearsal-list input[aria-label="End"]', 'change');
+  const saved = await hp.evaluate(() => JSON.parse(localStorage.getItem('snipecam.settings')).rehearsals);
+  expect(saved.length === 1 && saved[0].weekday === d.getDay(), JSON.stringify(saved));
+  await shot(hp, '16-rehearsals');
+  await hp.tap('[data-view="settings"] [data-go="watch"]');
+  await hp.tap('[data-go="inbox"]');
+  await hp.waitForSelector('#inbox-grid .cand');
+  // Rehearsal starts in 60 min: 30-min window begins in 30 min, so no warning yet
+  expect(!(await hp.textContent('#inbox-grid')).includes('rehearsal'), 'warned outside the window');
+  await hp.tap('[data-view="inbox"] [data-go="watch"]');
+  await hp.tap('[data-go="settings"]');
+  await hp.fill('#rehearsal-list input[aria-label="Start"]', hm(new Date(d.getTime() + 20 * 60000)));
+  await hp.dispatchEvent('#rehearsal-list input[aria-label="Start"]', 'change');
+  await hp.tap('[data-view="settings"] [data-go="watch"]');
+  await hp.tap('[data-go="inbox"]');
+  await hp.waitForFunction(() => document.getElementById('inbox-grid').textContent.includes('near rehearsal time'));
+});
+await hp.context().close();
+
+if (engine === 'chromium') {
+  const op = await newPage();
+  await op.goto(`${server.base}/`);
+  await check('T-APP-24', 'Works offline after the first load (service worker + cached models)', async () => {
+    await op.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+    await op.evaluate(() => navigator.serviceWorker.ready);
+    await op.reload(); // let the service worker take control and cache this load
+    await op.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+    await op.context().setOffline(true);
+    await op.reload();
+    await op.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready', null, { timeout: 60000 });
+    expect(/Detector ready/.test(await op.textContent('#log .log-body')), 'detector did not load offline');
+    expect(op.errors.length === 0, op.errors.join('; '));
+  });
+  await op.context().close();
+}
+
 // --- Idle rate: no faces → drops to idleFps after idleAfterSec ---
 const idlePage = await newPage();
 await idlePage.addInitScript(() => localStorage.setItem('snipecam.settings', JSON.stringify({ idleAfterSec: 5, idleFps: 0.5 })));
@@ -510,6 +575,10 @@ if (engine === 'chromium' && existsSync(faceCam)) {
     expect(/known 1/.test(await fp.textContent('#status-detail')), 'status lacks "known 1"');
     await shot(fp, '10-member-label');
   });
+  await check('T-APP-22', 'Member stays in view → caught photo appears (badge 1) without stopping the camera', async () => {
+    await fp.waitForFunction(() => document.getElementById('badge').textContent === '1' && !document.getElementById('badge').hidden, null, { timeout: 60000 });
+    expect((await state(fp)) === 'Watching', 'camera should still be running');
+  });
   await faceBrowser.close();
 } else if (engine === 'chromium') {
   results.push({ id: 'T-APP-12', name: 'Face on camera (skipped: run tools/fetch-fixtures.sh)', pass: true });
@@ -523,7 +592,8 @@ if (engine === 'chromium' && existsSync(pairCam)) {
   const pp = await pctx.newPage();
   pp.setDefaultTimeout(60000);
   pp.on('pageerror', (e) => console.log('pageerror', e.message));
-  await pp.addInitScript(() => localStorage.setItem('snipecam.settings', JSON.stringify({ gapSec: 3, minHits: 2 })));
+  // Default gapSec (5 s) < the 8 s empty stretch, so each pass ends; generous waits tolerate slow software rendering.
+  await pp.addInitScript(() => localStorage.setItem('snipecam.settings', JSON.stringify({ gapSec: 5, minHits: 2 })));
   await pp.goto(`${server.base}/`);
   await pp.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
   await addMember(pp, 'Person A', 'persona', ['people/emotions-a/2.jpg', 'people/emotions-a/3.jpg', 'people/emotions-a/4.jpg']);
@@ -536,7 +606,8 @@ if (engine === 'chromium' && existsSync(pairCam)) {
     await pp.tap('#btn-start');
     await pp.waitForFunction(() => document.getElementById('status-state').textContent === 'Watching');
     await pp.tap('#btn-dim'); // T-DEV-4: everything below runs under dim
-    await pp.waitForFunction(() => document.getElementById('badge').textContent === '2', null, { timeout: 3 * loopMs });
+    await pp.waitForFunction(() => document.getElementById('badge').textContent === '2', null, { timeout: 5 * loopMs })
+      .catch(async (err) => { throw new Error(`${err.message}\n--- app log ---\n${(await pp.textContent('#log .log-body')).slice(-1500)}`); });
     const c = await candidates();
     expect(c.length === 2 && c.every((x) => x.inFrame === 2 && x.kb > 10), JSON.stringify(c));
     expect(/2 caught · post by 12 am/.test(await pp.textContent('#dim-text')), `dim text: ${await pp.textContent('#dim-text')}`);
@@ -572,8 +643,8 @@ if (engine === 'chromium' && existsSync(pairCam)) {
       await db.deleteCandidates((await db.listCandidates()).map((c) => c.id));
     });
     // Wait until B is being seen, then stop right away
-    await pp.waitForFunction(() => /known [12]/.test(document.getElementById('status-detail').textContent), null, { timeout: 2 * loopMs });
-    await pp.waitForFunction(() => /Sighting confirmed: Person B/.test(document.getElementById('log').textContent.split('Stop').pop()), null, { timeout: loopMs });
+    await pp.waitForFunction(() => /known [12]/.test(document.getElementById('status-detail').textContent), null, { timeout: 3 * loopMs });
+    await pp.waitForFunction(() => /Sighting confirmed: Person B/.test(document.getElementById('log').textContent.split('Stop').pop()), null, { timeout: 2 * loopMs });
     await pp.tap('#btn-start'); // Stop
     await pp.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
     const c = await candidates();

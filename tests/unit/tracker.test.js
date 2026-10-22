@@ -9,7 +9,13 @@ function setup(opts = {}) {
   let n = 0;
   const frame = () => ({ id: n++ });
   const hit = (memberId, quality, f = frame()) => ({ memberId, quality, frame: f, meta: { q: quality } });
-  return { tracker, disposed, frame, hit };
+  // update() as a well-behaved caller uses it: improved frames are released after use.
+  const step = (hits, t) => {
+    const r = tracker.update(hits, t);
+    for (const e of r.improved) tracker.release(e.frame);
+    return r;
+  };
+  return { tracker, disposed, frame, hit, step };
 }
 
 test('T-TRK-1: a single hit then a gap → not reported; its frame disposed', () => {
@@ -29,9 +35,9 @@ test('T-TRK-2: confirmed emitted once, at the minHits-th hit', () => {
 });
 
 test('T-TRK-3: ended session returns the best frame; all other frames disposed', () => {
-  const { tracker, disposed, hit } = setup();
+  const { tracker, disposed, hit, step } = setup();
   const hits = [hit('a', 0.2), hit('a', 0.9), hit('a', 0.4), hit('a', 0.95), hit('a', 0.1)];
-  hits.forEach((h, i) => tracker.update([h], i * 500));
+  hits.forEach((h, i) => step([h], i * 500));
   const { ended } = tracker.update([], 2000 + 5001);
   assert.equal(ended.length, 1);
   assert.equal(ended[0].frame, hits[3].frame);
@@ -54,11 +60,11 @@ test('T-TRK-4: a gap longer than gapSec splits into two sessions', () => {
 });
 
 test('T-TRK-5: two members tracked independently; a shared frame is disposed only after both release it', () => {
-  const { tracker, disposed, frame, hit } = setup();
+  const { tracker, disposed, frame, hit, step } = setup();
   const f1 = frame();
   const f2 = frame();
-  tracker.update([hit('a', 0.9, f1), hit('b', 0.8, f1)], 0);
-  tracker.update([hit('a', 0.1, f2), hit('b', 0.1, f2)], 500);
+  step([hit('a', 0.9, f1), hit('b', 0.8, f1)], 0);
+  step([hit('a', 0.1, f2), hit('b', 0.1, f2)], 500);
   assert.equal(disposed.get(f2), 1, 'unused shared frame disposed once');
   const { ended } = tracker.update([], 6000);
   assert.deepEqual(ended.map((e) => e.memberId).sort(), ['a', 'b']);
@@ -98,8 +104,29 @@ test('T-TRK-7: no leaks — every frame is disposed exactly once after results a
     const f = frame();
     const hits = ['a', 'b', 'c'].filter(() => rnd() < 0.4).map((m) => hit(m, rnd(), f));
     if (hits.length) all.push(f);
-    for (const e of tracker.update(hits, t).ended) tracker.release(e.frame);
+    const r = tracker.update(hits, t);
+    for (const e of [...r.ended, ...r.improved]) tracker.release(e.frame);
   }
   for (const e of tracker.flush()) tracker.release(e.frame);
   for (const f of all) assert.equal(disposed.get(f), 1, `frame ${f.id} disposed ${disposed.get(f) ?? 0}×`);
+});
+
+test('T-TRK-8: improved reports the best frame at confirmation and whenever it gets better, not otherwise', () => {
+  const { tracker, disposed, hit } = setup();
+  assert.deepEqual(tracker.update([hit('a', 0.5)], 0).improved, []); // not confirmed yet
+  const h2 = hit('a', 0.4);
+  let r = tracker.update([h2], 500); // confirmed: best is still the first hit
+  assert.equal(r.improved.length, 1);
+  assert.equal(r.improved[0].quality, 0.5);
+  tracker.release(r.improved[0].frame);
+  r = tracker.update([hit('a', 0.3)], 1000); // worse: nothing to report
+  assert.equal(r.improved.length, 0);
+  const better = hit('a', 0.9);
+  r = tracker.update([better], 1500);
+  assert.equal(r.improved[0].frame, better.frame);
+  tracker.release(r.improved[0].frame);
+  assert.equal(disposed.get(better.frame) ?? 0, 0, 'session still holds its best frame');
+  const { ended } = tracker.update([], 7000);
+  tracker.release(ended[0].frame);
+  assert.equal(disposed.get(better.frame), 1);
 });

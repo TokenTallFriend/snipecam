@@ -16,7 +16,7 @@ import { dayKey, reminderDue } from './rules.js';
 import { now } from './clock.js';
 import * as ui from './ui.js';
 
-export const VERSION = 'P5.1';
+export const VERSION = 'P6';
 
 const CLOCK_MS = 10_000;
 
@@ -96,6 +96,7 @@ async function boot() {
   await refreshBadge();
   wireUi();
   setInterval(clock, CLOCK_MS);
+  registerServiceWorker();
   setState('LOADING');
   await loadDetector();
   // Test hook: ?autostart starts the camera without a tap (used by automated browser tests).
@@ -105,6 +106,12 @@ async function boot() {
 async function reloadMembers() {
   app.members = await db.listMembers();
   log(`Roster: ${app.members.length} member${app.members.length === 1 ? '' : 's'}`);
+}
+
+// Offline support (sw.js). Failure is harmless: the app just needs a connection to start.
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('sw.js').catch((err) => log(`Offline support unavailable: ${err.message}`, 'warn'));
 }
 
 async function refreshBadge() {
@@ -262,7 +269,15 @@ async function openSettings() {
   let cameras = [];
   try { cameras = await listCameras(); } catch (err) { log(err, 'warn'); }
   ui.renderSettings(app.settings, onSettingChange, { cameras });
+  renderRehearsals();
   ui.showView('settings');
+}
+
+function renderRehearsals() {
+  ui.renderRehearsals(app.settings.rehearsals, (list) => {
+    onSettingChange('rehearsals', list);
+    renderRehearsals();
+  });
 }
 
 function wireUi() {
@@ -285,6 +300,10 @@ function wireUi() {
   initRoster({ onChanged: reloadMembers, onLocks });
   initInbox({ getMembers: () => app.members, getSettings: () => app.settings, onChanged: onLocks });
 
+  document.getElementById('btn-add-rehearsal').addEventListener('click', () => {
+    onSettingChange('rehearsals', [...app.settings.rehearsals, { weekday: 1, start: '19:00', end: '21:00' }]);
+    renderRehearsals();
+  });
   document.getElementById('btn-log').addEventListener('click', () => toggleLog());
   document.getElementById('btn-log-close').addEventListener('click', () => toggleLog(false));
   document.getElementById('btn-reset').addEventListener('click', () => {
