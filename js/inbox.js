@@ -15,7 +15,7 @@ const state = {
   cands: [],
   locked: new Set(),
   selected: new Set(),
-  urls: new Map(), // candidate id → object URL of its photo
+  urls: new Map(), // photoKey(c) → object URL of its photo
   current: null, // candidate open in the detail view
   queue: [], // share flow
   qi: 0,
@@ -36,6 +36,13 @@ export function initInbox(d) {
   $('btn-share-done').addEventListener('click', finishShare);
 }
 
+// Called when a new photo is caught: redraws the Inbox if it's on screen (not mid-share, to avoid surprises).
+export async function refreshInbox() {
+  if (document.querySelector('[data-view="inbox"]').hidden) return;
+  await load();
+  render();
+}
+
 export async function showInbox() {
   await load();
   render();
@@ -50,19 +57,24 @@ async function load() {
   const ids = new Set(state.cands.map((c) => c.id));
   for (const id of [...state.selected]) if (!ids.has(id)) state.selected.delete(id);
   for (const c of state.cands) if (!previous.has(c.id)) state.selected.add(c.id); // new catches start selected
-  for (const [id, url] of state.urls) {
-    if (!ids.has(id)) {
+  const keys = new Set(state.cands.map(photoKey));
+  for (const [key, url] of state.urls) {
+    if (!keys.has(key)) {
       URL.revokeObjectURL(url);
-      state.urls.delete(id);
+      state.urls.delete(key);
     }
   }
 }
+
+// A better photo replaces a catch under the same id, so the photo cache is keyed by id + time seen.
+const photoKey = (c) => `${c.id}:${c.seenAt}`;
 
 const memberById = (id) => deps.getMembers().find((m) => m.id === id) ?? { id, name: 'Unknown', slack: '' };
 
 // Display info for a candidate: title, others in the photo, warnings.
 function card(c) {
-  if (!state.urls.has(c.id)) state.urls.set(c.id, URL.createObjectURL(db.candidateBlob(c)));
+  const key = photoKey(c);
+  if (!state.urls.has(key)) state.urls.set(key, URL.createObjectURL(db.candidateBlob(c)));
   const others = (c.inFrame ?? []).filter((id) => id !== c.memberId);
   const flags = [];
   const lockedOthers = others.filter((id) => state.locked.has(id)).map((id) => memberById(id).name);
@@ -70,7 +82,7 @@ function card(c) {
   if (inRehearsalWindow(c.seenAt, deps.getSettings().rehearsals)) flags.push('near rehearsal time (rule 1c)');
   return {
     c,
-    url: state.urls.get(c.id),
+    url: state.urls.get(key),
     title: memberById(c.memberId).name,
     others: others.map((id) => memberById(id).name).join(', '),
     flags: flags.join('; '),
@@ -162,7 +174,7 @@ function shareCurrent() {
   const s = step();
   if (!s) return finishShare();
   copyText(s.tagLine);
-  shareFile(s.file, s.tagLine)
+  shareFile(s.file)
     .then(async (result) => {
       if (result === 'cancelled') {
         ui.toast('Not shared: still in your Inbox');

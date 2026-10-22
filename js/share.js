@@ -61,9 +61,11 @@ async function shareOrCancel(data) {
 }
 
 // One photo per post (rule 5). iPhone: share sheet. Elsewhere: downloads the photo.
+// Shares the file only: with text added, some share targets (Slack on iOS) take the text/link instead of the
+// photo. The tags go on the clipboard instead (copyText).
 // Must be called from a tap handler without awaiting anything slow first.
-export function shareFile(file, text) {
-  if (canShareFiles([file])) return shareOrCancel({ files: [file], text });
+export function shareFile(file) {
+  if (canShareFiles([file])) return shareOrCancel({ files: [file] });
   downloadBlob(file, file.name);
   return Promise.resolve('downloaded');
 }

@@ -10,13 +10,13 @@ import { nextDelay, createStats } from './loop.js';
 import { matchFaces } from './matcher.js';
 import * as db from './db.js';
 import { initRoster, showRoster } from './roster.js';
-import { initInbox, showInbox } from './inbox.js';
+import { initInbox, showInbox, refreshInbox } from './inbox.js';
 import { getMode } from './modes/index.js';
 import { dayKey, reminderDue } from './rules.js';
 import { now } from './clock.js';
 import * as ui from './ui.js';
 
-export const VERSION = 'P5';
+export const VERSION = 'P5.1';
 
 const CLOCK_MS = 10_000;
 
@@ -55,6 +55,7 @@ const ctx = {
   },
   onCandidate() {
     refreshBadge();
+    refreshInbox();
   },
 };
 

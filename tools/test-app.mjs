@@ -340,6 +340,27 @@ await check('T-APP-19', 'Inbox lists today\'s catches, all preselected, with pos
   await shot(ip, '13-inbox');
 });
 
+await check('T-APP-21', 'Inbox updates live when a photo is caught (and when a better one replaces it)', async () => {
+  const add = (memberId, color) => ip.evaluate(async ([memberId, color]) => {
+    const db = await import('/js/db.js');
+    const { dayKey } = await import('/js/rules.js');
+    const c = new OffscreenCanvas(320, 240);
+    const g = c.getContext('2d');
+    g.fillStyle = color;
+    g.fillRect(0, 0, 320, 240);
+    const jpeg = await (await c.convertToBlob({ type: 'image/jpeg' })).arrayBuffer();
+    const cand = await db.putCandidate({ id: crypto.randomUUID(), memberId, day: dayKey(window.snipecam.now()), jpeg, thumb: '',
+      quality: 0.9, similarity: 0.8, box: [0, 0, 50, 50], inFrame: [memberId], seenAt: window.snipecam.now(), status: 'pending' });
+    window.snipecam.ctx.onCandidate(cand, 'keep'); // what tripod mode calls after saving a catch
+  }, [memberId, color]);
+  await add('c', '#fff'); // replaces Cara's photo (same id)
+  const src = () => ip.$eval('#inbox-grid .cand:has-text("Cara") img', (i) => i.src);
+  const before = await src();
+  await add('c', '#000');
+  await ip.waitForFunction((b) => [...document.querySelectorAll('#inbox-grid .cand')]
+    .find((c) => c.textContent.includes('Cara'))?.querySelector('img').src !== b, before);
+  expect((await ip.$$('#inbox-grid .cand')).length === 3, 'replacement should not add a card');
+});
 await check('T-SHR-3', 'Share selected: one photo per post, everyone in it tagged; tagged members skipped later; all locked', async () => {
   await ip.tap('#btn-share-selected');
   await ip.waitForSelector('[data-view="share"]:not([hidden])');
@@ -352,6 +373,7 @@ await check('T-SHR-3', 'Share selected: one photo per post, everyone in it tagge
   const st = await dbState(ip);
   expect(st.shares.length === 2, `expected 2 posts (Bob was tagged in Alice's), got ${st.shares.length}`);
   expect(st.shares.every((x) => x.n === 1), 'each post must have exactly one photo');
+  expect(st.shares.every((x) => x.text === ''), 'share must send only the photo (text makes Slack take a link)');
   expect(/^snipe-\d{4}-\d{2}-\d{2}-\d{6}-alice-bob\.jpg$/.test(st.shares[0].names[0]), st.shares[0].names[0]);
   expect(st.clip === '🎯 Sniped Cara', `clipboard "${st.clip}"`);
   expect(st.cands.length === 0, `candidates left: ${st.cands}`);
