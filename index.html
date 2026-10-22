@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>SnipeCam</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; padding: 16px; background: #000; color: #eee; font: 16px/1.5 system-ui, sans-serif; }
+    h1 { margin: 0 0 12px; }
+    li { margin: 4px 0; }
+    .ok { color: #4ade80; } .bad { color: #f87171; }
+  </style>
+</head>
+<body>
+  <h1>SnipeCam</h1>
+  <p>P0 placeholder. Environment check:</p>
+  <ul id="checks"></ul>
+  <script type="module">
+    const checks = {
+      'Secure context (HTTPS)': window.isSecureContext,
+      'Camera API': !!navigator.mediaDevices?.getUserMedia,
+      'WebGPU': 'gpu' in navigator,
+      'WebGL2': !!document.createElement('canvas').getContext('webgl2'),
+      'Wake Lock': 'wakeLock' in navigator,
+      'Web Share (files)': !!navigator.canShare?.({ files: [new File([''], 'x.jpg', { type: 'image/jpeg' })] }),
+      'IndexedDB': 'indexedDB' in window,
+    };
+    document.getElementById('checks').innerHTML = Object.entries(checks)
+      .map(([name, ok]) => `<li class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✗'} ${name}</li>`)
+      .join('');
+  </script>
+</body>
+</html>

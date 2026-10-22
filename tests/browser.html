@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SnipeCam Tests</title>
+  <style>
+    body { margin: 0; padding: 16px; background: #111; color: #eee; font: 14px/1.5 system-ui, sans-serif; }
+    .pass { color: #4ade80; } .fail { color: #f87171; }
+    pre { margin: 2px 0 8px 20px; white-space: pre-wrap; color: #fca5a5; }
+  </style>
+</head>
+<body>
+  <h1>SnipeCam browser tests</h1>
+  <div id="results">Running…</div>
+  <script type="module">
+    import { run } from './harness.js';
+    import { files } from './browser/index.js';
+    for (const f of files) await import(`./browser/${f}`);
+    run(document.getElementById('results'));
+  </script>
+</body>
+</html>

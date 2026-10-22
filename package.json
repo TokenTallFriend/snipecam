@@ -1,0 +1,11 @@
+{
+  "name": "snipecam",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "On-device face recognition for the club sniping game",
+  "scripts": {
+    "test": "node --test \"tests/unit/**/*.test.js\"",
+    "serve": "sh tools/serve.sh"
+  }
+}

@@ -1,0 +1,9 @@
+# Face data must never be committed
+tests/fixtures/
+*.snipedb.json
+
+node_modules/
+.DS_Store
+
+# Club documents stay local
+*.pdf
