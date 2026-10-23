@@ -16,7 +16,7 @@ import { dayKey, reminderDue } from './rules.js';
 import { now } from './clock.js';
 import * as ui from './ui.js';
 
-export const VERSION = 'P6.1';
+export const VERSION = 'P6.2';
 
 const CLOCK_MS = 10_000;
 

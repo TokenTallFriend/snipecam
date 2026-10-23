@@ -25,6 +25,7 @@ On-device, in-browser face recognition for the club sniping game. **Passive (tri
 | Storage | IndexedDB per device: roster, candidates (JPEG), daily lock log. Settings in localStorage. **No face data in the repo.** |
 | Slack tags | The iOS share sheet sends the photo only (with text, Slack took a link instead). Tags are copied to the clipboard, but pasted `@handle` text isn't a real Slack mention: that needs Slack's @-picker or the Slack API with member IDs → P7 (Slack app). **Save** is the main path for now. |
 | Zoom | Camera's own zoom (`applyConstraints({zoom})`) when the browser exposes it, so detail comes from the full sensor; digital crop otherwise or as top-up. Preview scales to match. |
+| Roster sync | Export/import **merges**: members matched by id, then name (case/space-insensitive); photos combined, duplicates skipped (re-import is harmless); local id/name/handle kept (empty handle filled); same name but clearly different face (best similarity < 0.5) → kept separate as "Name (2)" and reported; ≤ 30 photos per member; additive (deletions don't spread). Workflow: enroll on laptop, export, import on phone (and back). |
 | Locked members | Still recognized (so they can't be mistaken for someone else) but drawn gray with 🔒; no photos or alerts. |
 | Offline | `sw.js`: app files network-first (fresh when online, cached offline); pinned face library cache-first; models in IndexedDB (by the library). |
 | Out of scope (v1) | Slack auto-post, scoreboard, background operation (iOS forbids), other modes. |
@@ -84,6 +85,7 @@ Source: *Sniping Rules (Updated Spring 2026)*. Game logic lives in `js/rules.js`
 │   ├── capture.js          Grab/copy frame, crop, JPEG
 │   ├── enroll.js           Photos → validated embeddings + thumbnails
 │   ├── roster.js           Roster + member editor screens, today's lock actions, export/import
+│   ├── rostersync.js       [pure] Merge an imported roster into this device's (rosters grow together)
 │   ├── inbox.js            Inbox grid, candidate detail, share flow (one photo per post)
 │   ├── clock.js            App clock (`?clockOffset` test hook)
 │   ├── db.js               IndexedDB: members, candidates, locks; export/import
@@ -433,7 +435,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 | `listCandidates(day)` / `getCandidate(memberId, day)` / `putCandidate(c)` / `deleteCandidates(ids)` / `dismissCandidates(ids)` / `candidateBlob(c)` | Inbox; photo stored as ArrayBuffer (portable across IndexedDB implementations) |
 | `purgeExpired(today)` | Delete candidates with `day < today` (rule 9) |
 | `lock(memberIds, day, via)` / `unlock(memberId, day)` / `listLocks(day)` | Daily lock |
-| `exportJson()` / `importJson(str, {mode})` | Roster only |
+| `exportJson()` / `importJson(str, {mode})` | Roster only; `merge` (default) via `rostersync.mergeRosters`, returns report; `replace` makes it identical |
 | `validateMember(obj) → string[]` [pure] | Errors |
 
 - [x] T-DB-1 [B] Member CRUD; delete cascades
@@ -449,6 +451,8 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-DB-11 [B] `dismissCandidates` marks dismissed, drops photo; dismissed not listed
 - [x] T-DB-12 [B] `reassignCandidate` moves catch, replaces target's pending one
 - [x] T-DB-13 [B] `deleteCandidatesFor` removes only named members' catches that day
+- [x] T-DB-14 [B] Merge import: same person enrolled elsewhere (different id, name in other case) gains photos, keeps local id
+- [x] T-SYNC-1..10 [U] `mergeRosters`: id match, name match, idempotent re-import, two-way growth, handle fill, name conflict kept separate, ids authoritative, 30-photo cap, `nameKey`
 
 ### 7.13 `share.js`, `inbox.js`
 | Function | Purpose |
@@ -523,7 +527,8 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-APP-13 No faces → idle rate after `idleAfterSec`
 - [x] T-APP-14 Add member from 4 photos: 3 used, blank skipped; row shows `@handle · 3 photos`
 - [x] T-APP-15 Editor shows thumbnails and skipped-photo reason
-- [x] T-APP-16 Export downloads `snipecam-roster-YYYY-MM-DD.snipedb.json`; import on fresh device restores member
+- [x] T-APP-16 Export → second device that enrolled the same person separately imports → 1 member, 4 photos; re-import adds nothing
+- [ ] T-SYNC-11 [M] Laptop → phone: enroll/add photos on laptop, export, import on phone; member photo counts grow, catches/locks kept
 - [x] T-APP-17 Delete member (confirm) removes them
 - [x] T-APP-18 Enrolled member on camera → green name label, `known 1`; strangers draw nothing
 - [x] T-APP-19 Inbox lists catches, all preselected, countdown, "with Bob" on a shared photo

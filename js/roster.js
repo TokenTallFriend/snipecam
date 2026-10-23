@@ -1,6 +1,7 @@
 // Roster screens: member list, add/edit member, export/import.
 
 import * as db from './db.js';
+import { describeMerge } from './rostersync.js';
 import { enrollFromFiles, selfConsistency } from './enroll.js';
 import { log } from './log.js';
 import { dayKey } from './rules.js';
@@ -168,9 +169,11 @@ async function exportRoster() {
 
 async function importRoster(file) {
   try {
-    const { added, updated } = await db.importJson(await file.text(), { mode: 'merge' });
-    ui.toast(`Imported: ${added} added, ${updated} updated`);
-    log(`Imported roster: ${added} added, ${updated} updated`);
+    const report = await db.importJson(await file.text(), { mode: 'merge' });
+    const summary = describeMerge(report);
+    ui.toast(summary, report.conflicts.length ? 10000 : 5000);
+    log(summary);
+    for (const c of report.conflicts) log(c, 'warn');
     await onMembersChanged();
     await showRoster();
   } catch (err) {

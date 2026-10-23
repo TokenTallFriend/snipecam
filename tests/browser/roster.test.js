@@ -36,7 +36,7 @@ test('T-DB-2', 'export → clear → import restores the roster', async () => {
   await db.clearAll();
   assert.equal((await db.listMembers()).length, 0);
   const r = await db.importJson(json);
-  assert.deepEqual(r, { added: 1, updated: 0 });
+  assert.equal(r.added, 1);
   const after = await db.listMembers();
   assert.equal(after.length, before.length);
   assert.equal(after[0].name, before[0].name);
@@ -46,8 +46,23 @@ test('T-DB-2', 'export → clear → import restores the roster', async () => {
 test('T-DB-3', 'merge-importing the same file twice adds no duplicates', async () => {
   const json = await db.exportJson();
   const r = await db.importJson(json, { mode: 'merge' });
-  assert.deepEqual(r, { added: 0, updated: 1 });
+  assert.deepEqual([r.added, r.merged, r.unchanged, r.photosAdded], [0, 0, 1, 0]);
   assert.equal((await db.listMembers()).length, 1);
+});
+
+test('T-DB-14', 'merge import into the database: same person enrolled on another device gains photos, keeps local id', async () => {
+  const local = (await db.listMembers())[0];
+  const other = JSON.parse(await db.exportJson());
+  other.members[0].id = 'from-laptop';
+  other.members[0].name = ` ${local.name.toUpperCase()} `;
+  other.members[0].embeddings.push(vec(0.1).map((v, i) => (i % 2 ? v : -v))); // a new photo
+  other.members[0].thumbs.push('data:image/jpeg;base64,');
+  const r = await db.importJson(JSON.stringify(other));
+  assert.deepEqual([r.added, r.merged, r.photosAdded], [0, 1, 1]);
+  const after = await db.listMembers();
+  assert.equal(after.length, 1);
+  assert.equal(after[0].id, local.id);
+  assert.equal(after[0].embeddings.length, local.embeddings.length + 1);
 });
 
 test('T-DB-5', 'malformed import → error, database unchanged', async () => {

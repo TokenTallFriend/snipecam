@@ -4,7 +4,7 @@
 // - Face models: not handled here; the library stores them in IndexedDB itself.
 // - tests/: never cached.
 
-const CACHE = 'snipecam-v1';
+const CACHE = 'snipecam-v2';
 
 // Every file the app needs to start. tests/unit/sw.test.js checks this list covers js/.
 const SHELL = [
@@ -30,6 +30,7 @@ const SHELL = [
   'js/modes/index.js',
   'js/modes/tripod.js',
   'js/roster.js',
+  'js/rostersync.js',
   'js/rules.js',
   'js/settings.js',
   'js/share.js',

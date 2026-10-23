@@ -1,6 +1,8 @@
 // IndexedDB storage: members (roster), candidates (caught photos, P4), locks (daily snipe locks, P4).
 // Pure helpers (validateMember, normalizeSlack) touch no browser APIs, so Node can test them.
 
+import { mergeRosters } from './rostersync.js';
+
 export const DB_NAME = 'snipecam';
 export const EMBEDDING_SIZE = 1024;
 const DB_VERSION = 1;
@@ -242,6 +244,8 @@ export async function exportJson() {
 }
 
 // Validates everything first; on any problem throws and leaves the database unchanged.
+// mode 'merge' (default): combine with this device's roster (see rostersync.js). 'replace': make it identical.
+// Returns the merge report ({ added, merged, unchanged, photosAdded, duplicatesSkipped, overCap, conflicts }).
 export async function importJson(text, { mode = 'merge' } = {}) {
   let data;
   try {
@@ -256,17 +260,13 @@ export async function importJson(text, { mode = 'merge' } = {}) {
     const errors = validateMember(m);
     if (errors.length) throw new Error(`Member ${i + 1} (${m?.name ?? '?'}): ${errors.join(', ')}`);
   });
-  const existing = new Set((await listMembers()).map((m) => m.id));
+  const incoming = data.members.map(normalizeMember);
+  const local = mode === 'replace' ? [] : await listMembers();
+  const { changed, report } = mergeRosters(local, incoming, { newId: () => crypto.randomUUID() });
   const t = await transaction('members', 'readwrite');
   const store = t.objectStore('members');
   if (mode === 'replace') store.clear();
-  let added = 0;
-  let updated = 0;
-  for (const m of data.members) {
-    store.put(normalizeMember(m));
-    if (existing.has(m.id) && mode !== 'replace') updated++;
-    else added++;
-  }
+  for (const m of changed) store.put(normalizeMember(m));
   await complete(t);
-  return { added, updated };
+  return report;
 }

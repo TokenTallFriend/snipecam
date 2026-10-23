@@ -210,18 +210,22 @@ await check('T-APP-15', 'Editor shows skipped photo reason and thumbnails', asyn
   await shot(rp, '9-editor');
   await rp.tap('#btn-member-back');
 });
-await check('T-APP-16', 'Export downloads roster; import into a fresh device restores it', async () => {
+await check('T-APP-16', 'Export downloads roster; another device that enrolled the same person separately merges it (1 member, photos combined)', async () => {
   const [download] = await Promise.all([rp.waitForEvent('download'), rp.tap('#btn-export')]);
   expect(/^snipecam-roster-\d{4}-\d{2}-\d{2}\.snipedb\.json$/.test(download.suggestedFilename()), download.suggestedFilename());
   const file = await download.path();
-  const fresh = await newPage();
-  await fresh.goto(`${server.base}/`);
-  await fresh.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
-  await fresh.tap('[data-go="roster"]');
-  await fresh.setInputFiles('#import-file', file);
-  await fresh.waitForFunction(() => /Imported: 1 added/.test(document.getElementById('toast').textContent));
-  expect((await fresh.textContent('#roster-list')).includes('Person B'), 'imported member missing');
-  await fresh.context().close();
+  const other = await newPage(); // a separate device
+  await other.goto(`${server.base}/`);
+  await other.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+  await addMember(other, 'person b', '', ['people/emotions-b/5.jpg']);
+  await other.setInputFiles('#import-file', file);
+  await other.waitForFunction(() => /Imported: 0 added, 1 updated \(\+3 photos\)/.test(document.getElementById('toast').textContent));
+  const rows = await other.$$eval('.member-row', (els) => els.map((e) => e.textContent));
+  expect(rows.length === 1 && rows[0].includes('@personb · 4 photos'), JSON.stringify(rows));
+  await other.setInputFiles('#import-file', file); // importing again changes nothing
+  await other.waitForFunction(() => /Imported: 0 added, 0 updated \(\+0 photos\), 3 already had/.test(document.getElementById('toast').textContent));
+  await shot(other, '19-merged-roster');
+  await other.context().close();
 });
 await check('T-APP-17', 'Delete member (after confirm) removes them', async () => {
   rp.once('dialog', (d) => d.accept());
