@@ -15,7 +15,9 @@ export function mapBox([x, y, w, h], srcW, srcH, viewW, viewH) {
 // Draws the overlay. `results` come from matchFaces: [{ face, top, match }].
 // Members get a green box + name (if showLabels). Strangers are drawn only in debug mode, with their closest member.
 // `crop` is where the processed frame sits within the video.
-export function renderFaces(canvas, results, { videoW, videoH, crop, debug = false, showLabels = true }) {
+// Locked members (already sniped today) are drawn gray with 🔒 so it's clear why they aren't being caught.
+// The preview is scaled by the digital zoom, so the processed crop fills the view: map boxes from crop space.
+export function renderFaces(canvas, results, { videoW, videoH, crop, debug = false, showLabels = true, locked = new Set() }) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
@@ -27,23 +29,29 @@ export function renderFaces(canvas, results, { videoW, videoH, crop, debug = fal
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   canvas.dataset.labels = results.filter((r) => r.match).map((r) => r.match.member.name).join(',');
+  canvas.dataset.locked = results.filter((r) => r.match && locked.has(r.match.member.id)).map((r) => r.match.member.name).join(',');
   if (!videoW) return;
   ctx.lineWidth = 2;
   ctx.font = '600 14px system-ui, sans-serif';
   for (const { face, top, match } of results) {
     const isMember = !!match && showLabels;
     if (!isMember && !debug) continue;
-    const [x, y, bw, bh] = mapBox([face.box[0] + crop.x, face.box[1] + crop.y, face.box[2], face.box[3]], videoW, videoH, w, h);
-    const label = isMember
-      ? debug ? `${match.member.name} ${match.similarity.toFixed(2)}` : match.member.name
-      : debug ? `${top ? `${top.member.name}? ${top.similarity.toFixed(2)}` : 'face'} · ${face.box[2]}px` : '';
-    const color = isMember ? '#22c55e' : 'rgba(200,200,200,0.9)';
+    const [x, y, bw, bh] = mapBox(face.box, crop.w, crop.h, w, h);
+    const isLocked = isMember && locked.has(match.member.id);
+    let label;
+    if (isMember) {
+      const name = isLocked ? `🔒 ${match.member.name} · sniped today` : match.member.name;
+      label = debug ? `${name} ${match.similarity.toFixed(2)}` : name;
+    } else {
+      label = `${top ? `${top.member.name}? ${top.similarity.toFixed(2)}` : 'face'} · ${face.box[2]}px`;
+    }
+    const color = isMember && !isLocked ? '#22c55e' : 'rgba(200,200,200,0.9)';
     ctx.strokeStyle = color;
     ctx.strokeRect(x, y, bw, bh);
     const tw = ctx.measureText(label).width + 10;
-    ctx.fillStyle = isMember ? color : 'rgba(0,0,0,0.65)';
+    ctx.fillStyle = isMember && !isLocked ? color : 'rgba(0,0,0,0.65)';
     ctx.fillRect(x, y - 22, tw, 22);
-    ctx.fillStyle = isMember ? '#000' : '#fff';
+    ctx.fillStyle = isMember && !isLocked ? '#000' : '#fff';
     ctx.fillText(label, x + 5, y - 6);
   }
 }

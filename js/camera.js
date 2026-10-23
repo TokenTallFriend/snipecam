@@ -24,6 +24,29 @@ export function stopCamera(videoEl) {
   if (videoEl) videoEl.srcObject = null;
 }
 
+// [pure] How to reach a zoom level: the camera's own zoom when it supports it (real detail from the full sensor
+// or a telephoto lens), topped up with a digital crop if the camera can't go far enough.
+// caps = MediaTrackCapabilities. Returns { hardware: number|null, digital: number }.
+export function zoomPlan(level, caps) {
+  const hw = caps?.zoom && caps.zoom.max > caps.zoom.min ? caps.zoom : null;
+  if (!hw) return { hardware: null, digital: level };
+  const hardware = Math.min(Math.max(level, hw.min), hw.max);
+  return { hardware, digital: Math.max(1, level / hardware) };
+}
+
+// Applies a zoom level to the running camera. Falls back to digital-only if the camera refuses.
+export async function applyZoom(level) {
+  const track = stream?.getVideoTracks()[0];
+  const plan = zoomPlan(level, track?.getCapabilities?.());
+  if (plan.hardware === null) return plan;
+  try {
+    await track.applyConstraints({ advanced: [{ zoom: plan.hardware }] });
+    return plan;
+  } catch {
+    return { hardware: null, digital: level };
+  }
+}
+
 export function isCameraLive() {
   return !!stream && stream.getVideoTracks().some((t) => t.readyState === 'live');
 }

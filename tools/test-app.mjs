@@ -565,6 +565,8 @@ if (engine === 'chromium' && existsSync(faceCam)) {
       return false;
     });
     expect(drawn, 'overlay is empty');
+    const logText = await fp.textContent('#log .log-body');
+    expect(!/TypeError|ReferenceError/.test(logText), `errors in app log: ${logText.match(/.*(TypeError|ReferenceError).*/)?.[0]}`);
     await shot(fp, '7-face-debug');
   });
   await check('T-APP-18', 'Enrolled member on camera → green name label; stranger mode shows nothing', async () => {
@@ -578,6 +580,35 @@ if (engine === 'chromium' && existsSync(faceCam)) {
   await check('T-APP-22', 'Member stays in view → caught photo appears (badge 1) without stopping the camera', async () => {
     await fp.waitForFunction(() => document.getElementById('badge').textContent === '1' && !document.getElementById('badge').hidden, null, { timeout: 60000 });
     expect((await state(fp)) === 'Watching', 'camera should still be running');
+  });
+  await check('T-APP-25', 'Locked member (sniped today) → gray 🔒 label and no new photo; Reset today restores catching', async () => {
+    await fp.tap('[data-go="roster"]');
+    await fp.tap('.member-row:has-text("Person A")');
+    await fp.tap('#btn-sniped-today');
+    await fp.waitForFunction(() => /marked by you/.test(document.getElementById('member-today-status').textContent));
+    await fp.tap('#btn-member-back');
+    await fp.tap('.panel:not([hidden]) [data-go="watch"]');
+    await fp.waitForFunction(() => document.getElementById('overlay').dataset.locked === 'Person A', null, { timeout: 30000 });
+    await shot(fp, '17-locked-label');
+    await fp.waitForTimeout(8000);
+    expect(await fp.isHidden('#badge'), 'locked member was caught');
+    await fp.tap('[data-go="roster"]');
+    await fp.tap('.member-row:has-text("Person A")');
+    await fp.tap('#btn-reset-today');
+    await fp.waitForFunction(() => /not caught yet/.test(document.getElementById('member-today-status').textContent));
+    await fp.tap('#btn-member-back');
+    await fp.tap('.panel:not([hidden]) [data-go="watch"]');
+    await fp.waitForFunction(() => document.getElementById('badge').textContent === '1' && !document.getElementById('badge').hidden, null, { timeout: 60000 });
+  });
+  await check('T-APP-26', 'Zoom (no camera zoom available → digital): preview scales, face still recognized and boxed', async () => {
+    await fp.tap('[data-go="settings"]');
+    await fp.selectOption('select[name="zoom"]', '1.5');
+    await fp.tap('[data-view="settings"] [data-go="watch"]');
+    await fp.waitForFunction(() => document.getElementById('video').style.transform === 'scale(1.5)');
+    expect(/Zoom 1\.5×: digital 1\.50×/.test(await fp.textContent('#log .log-body')), 'zoom not logged');
+    await fp.waitForTimeout(4000);
+    await fp.waitForFunction(() => document.getElementById('overlay').dataset.labels === 'Person A', null, { timeout: 30000 });
+    await shot(fp, '18-zoom');
   });
   await faceBrowser.close();
 } else if (engine === 'chromium') {

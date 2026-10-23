@@ -24,6 +24,8 @@ On-device, in-browser face recognition for the club sniping game. **Passive (tri
 | Hosting | GitHub Pages (public repo, HTTPS). Dev on `localhost`. |
 | Storage | IndexedDB per device: roster, candidates (JPEG), daily lock log. Settings in localStorage. **No face data in the repo.** |
 | Slack tags | The iOS share sheet sends the photo only (with text, Slack took a link instead). Tags are copied to the clipboard, but pasted `@handle` text isn't a real Slack mention: that needs Slack's @-picker or the Slack API with member IDs → P7 (Slack app). **Save** is the main path for now. |
+| Zoom | Camera's own zoom (`applyConstraints({zoom})`) when the browser exposes it, so detail comes from the full sensor; digital crop otherwise or as top-up. Preview scales to match. |
+| Locked members | Still recognized (so they can't be mistaken for someone else) but drawn gray with 🔒; no photos or alerts. |
 | Offline | `sw.js`: app files network-first (fresh when online, cached offline); pinned face library cache-first; models in IndexedDB (by the library). |
 | Out of scope (v1) | Slack auto-post, scoreboard, background operation (iOS forbids), other modes. |
 
@@ -267,7 +269,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-RUL-7 [U] `msUntilDeadline` at 23:00 = 3 600 000
 - [x] T-RUL-8 [U] `inRehearsalWindow` true at start−30, end+30; false at start−31; weekday respected
 - [x] T-RUL-9 [U] `reminderDue` once per day after `reminderAt`
-- [x] T-RUL-10 [B] Rehearsal schedule edited in Settings; catches inside ±30 min get ⚠ in Inbox, outside don't
+- [x] T-RUL-10 [B] Rehearsal schedule edited in Settings; catches inside ±30 min get ⚠ in Inbox, outside don't. iPhone ✓
 
 ### 7.3 `modes/index.js`, `modes/tripod.js`
 | Function | Purpose |
@@ -314,6 +316,8 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-CAM-4 [B] Permission denied → clear message, no crash (automated in `test:app`)
 - [x] T-CAM-5 [M] Camera picker switches devices
 - [x] T-CAM-6 [U] `cameraErrorMessage` maps each error name to readable text
+- [x] T-CAM-7 [U] `zoomPlan`: camera zoom when supported, digital top-up/fallback
+- [ ] T-CAM-8 [M] iPhone: Zoom 2× uses camera zoom (log: `Zoom 2×: camera 2×`); preview zooms; range improves
 
 ### 7.6 `device.js`
 | Function | Purpose |
@@ -525,9 +529,11 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-APP-19 Inbox lists catches, all preselected, countdown, "with Bob" on a shared photo
 - [x] T-APP-20 Dismiss selected removes catches without locking
 - [x] T-APP-21 Inbox updates live on a new catch; replaced (better) photo shows
-- [x] T-APP-22 Member stays in view → badge 1 without stopping the camera (P6 fix: was only on stop)
-- [x] T-APP-23 Manifest (standalone, start URL, 2 icons) + iOS icon served
-- [x] T-APP-24 Works offline after first load (Chromium: service worker + cached models)
+- [x] T-APP-22 Member stays in view → badge 1 without stopping the camera (P6 fix: was only on stop). iPhone ✓
+- [x] T-APP-23 Manifest (standalone, start URL, 2 icons) + iOS icon served. iPhone: home-screen icon ✓
+- [x] T-APP-24 Works offline after first load (Chromium: service worker + cached models). iPhone: Airplane Mode ✓
+- [x] T-APP-25 Locked member → gray "🔒 Name · sniped today" label, no new photo; Reset today restores catching
+- [x] T-APP-26 Zoom without camera zoom → digital: preview scales, face still recognized
 
 ---
 

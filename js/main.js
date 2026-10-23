@@ -2,7 +2,7 @@
 
 import { loadSettings, saveSettings, validate, DEFAULTS } from './settings.js';
 import { initLog, log, toggleLog } from './log.js';
-import { startCamera, stopCamera, listCameras, cameraErrorMessage } from './camera.js';
+import { startCamera, stopCamera, listCameras, cameraErrorMessage, applyZoom } from './camera.js';
 import { keepAwake, unlockAudio, setDim, isDim, beep } from './device.js';
 import { initDetector, detect } from './detector.js';
 import { grabFrame } from './capture.js';
@@ -16,7 +16,7 @@ import { dayKey, reminderDue } from './rules.js';
 import { now } from './clock.js';
 import * as ui from './ui.js';
 
-export const VERSION = 'P6';
+export const VERSION = 'P6.1';
 
 const CLOCK_MS = 10_000;
 
@@ -27,6 +27,7 @@ const app = {
   state: 'LOADING', // LOADING | READY | WATCHING | STOPPING | PAUSED | ERROR
   settings: null,
   cam: null, // { width, height }
+  zoom: { hardware: null, digital: 1 }, // how the zoom setting is achieved (camera zoom vs crop)
   awake: 'off',
   backend: null,
   timer: null,
@@ -172,11 +173,20 @@ async function startWatch() {
     setState('READY');
     return;
   }
+  await setZoom();
   app.awake = await keepAwake(true);
   log(`Camera ${app.cam.width}×${app.cam.height}; keep-awake: ${app.awake}`);
   await app.mode.start(ctx);
   setState('WATCHING');
   startLoop();
+}
+
+// Camera zoom where supported, else a digital crop. The preview is scaled to match, so what you see is what's watched.
+async function setZoom() {
+  app.zoom = await applyZoom(app.settings.zoom);
+  video.style.transform = app.zoom.digital > 1 ? `scale(${app.zoom.digital})` : '';
+  const how = [app.zoom.hardware !== null && `camera ${app.zoom.hardware}×`, app.zoom.digital > 1 && `digital ${app.zoom.digital.toFixed(2)}×`].filter(Boolean).join(' + ');
+  log(`Zoom ${app.settings.zoom}×: ${how || 'none'}`);
 }
 
 async function stopWatch(nextState = 'READY') {
@@ -185,6 +195,7 @@ async function stopWatch(nextState = 'READY') {
   await waitForTick();
   await app.mode.stop(ctx);
   stopCamera(video);
+  video.style.transform = '';
   app.awake = await keepAwake(false);
   setDim(false);
   setState(nextState);
@@ -215,7 +226,7 @@ async function tick() {
     let frame = null;
     let handedOff = false;
     try {
-      frame = await grabFrame(video, app.settings.zoom);
+      frame = await grabFrame(video, app.zoom.digital);
       const faces = await detect(frame.bitmap, { tiles: app.settings.tiles });
       app.stats.record(started, performance.now() - started);
       const results = matchFaces(faces, app.members, app.settings);
@@ -224,7 +235,7 @@ async function tick() {
       if (faces.length) app.lastFaceAt = performance.now();
       ui.renderFaces(overlay, results, {
         videoW: video.videoWidth, videoH: video.videoHeight, crop: frame.crop,
-        debug: app.settings.debugFaces, showLabels: app.settings.showLabels,
+        debug: app.settings.debugFaces, showLabels: app.settings.showLabels, locked: new Set(app.mode.lockedIds),
       });
       ui.setStatus({ detail: statusDetail() });
       if (isDim()) setDim(true, dimText());
@@ -262,6 +273,8 @@ function onSettingChange(key, value) {
   } else if (app.state === 'WATCHING' && CAMERA_KEYS.includes(key)) {
     log(`Camera setting ${key} changed; restarting camera`);
     startWatch();
+  } else if (app.state === 'WATCHING' && key === 'zoom') {
+    setZoom();
   }
 }
 

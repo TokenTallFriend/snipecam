@@ -10,7 +10,7 @@ export const FIELDS = [
   { key: 'deviceId', group: 'Camera', label: 'Camera', type: 'camera', default: null }, // null = default rear camera
   { key: 'width', group: 'Camera', label: 'Width (px)', type: 'number', min: 320, max: 3840, step: 1, int: true, default: 1920 },
   { key: 'height', group: 'Camera', label: 'Height (px)', type: 'number', min: 240, max: 2160, step: 1, int: true, default: 1080 },
-  { key: 'zoom', group: 'Camera', label: 'Zoom', type: 'select', options: [[1, '1×'], [1.5, '1.5×'], [2, '2×']], default: 1 },
+  { key: 'zoom', group: 'Camera', label: 'Zoom', type: 'select', options: [[1, '1×'], [1.5, '1.5×'], [2, '2×'], [3, '3×'], [4, '4×']], default: 1 },
   // Performance
   { key: 'processFps', group: 'Performance', label: 'Checks per second', type: 'number', min: 0.2, max: 10, step: 0.1, default: 2 },
   { key: 'idleFps', group: 'Performance', label: 'Idle checks per second', type: 'number', min: 0.1, max: 5, step: 0.1, default: 0.5 },
