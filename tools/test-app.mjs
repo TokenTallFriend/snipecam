@@ -13,12 +13,18 @@ const server = await startServer();
 const browser = await launch(engine);
 const results = [];
 
-async function check(id, name, fn) {
+// page (optional): on failure, saves a screenshot and appends the end of the app's log to the error.
+async function check(id, name, fn, page = null) {
   try {
     await fn();
     results.push({ id, name, pass: true });
   } catch (err) {
-    results.push({ id, name, pass: false, error: err.message.split('\n')[0] });
+    let extra = '';
+    if (page) {
+      if (shotDir) await page.screenshot({ path: `${shotDir}/${engine}-FAIL-${id}.png` }).catch(() => {});
+      extra = ` | app log: ${(await page.textContent('#log .log-body').catch(() => '')).slice(-400)}`;
+    }
+    results.push({ id, name, pass: false, error: err.message.split('\n')[0] + extra });
   }
 }
 
@@ -220,6 +226,9 @@ await check('T-APP-16', 'Export downloads roster; another device that enrolled t
   await addMember(other, 'person b', '', ['people/emotions-b/5.jpg']);
   await other.setInputFiles('#import-file', file);
   await other.waitForFunction(() => /Imported: 0 added, 1 updated \(\+3 photos\)/.test(document.getElementById('toast').textContent));
+  // The toast appears before the list redraws; wait for the list itself.
+  await other.waitForFunction(() => document.getElementById('roster-list').textContent.includes('4 photos'), null, { timeout: 10000 })
+    .catch(() => {});
   const rows = await other.$$eval('.member-row', (els) => els.map((e) => e.textContent));
   expect(rows.length === 1 && rows[0].includes('@personb · 4 photos'), JSON.stringify(rows));
   await other.setInputFiles('#import-file', file); // importing again changes nothing
@@ -474,6 +483,55 @@ await check('T-SHR-5', 'Laptop (no share sheet): Share downloads the photo and c
 });
 await lp.context().close();
 
+
+
+// --- Lookalikes (twins): roster link + "which one?" in the Inbox ---
+const tw = await newPage();
+await tw.addInitScript(fakeIphoneShare);
+await tw.goto(`${server.base}/`);
+await tw.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');
+await seedInbox(tw);
+await check('T-APP-27', 'Roster: linking Alice ↔ Bob as lookalikes saves on both members', async () => {
+  await tw.tap('[data-go="roster"]');
+  await tw.tap('.member-row:has-text("Alice")');
+  await tw.selectOption('#lookalike-add', 'b');
+  await tw.waitForSelector('#lookalike-chips .chip');
+  await tw.tap('#btn-member-save');
+  await tw.waitForSelector('[data-view="roster"]:not([hidden])');
+  const rows = await tw.$$eval('.member-row', (els) => els.map((e) => e.textContent));
+  expect(rows.some((r) => r.includes('Alice') && r.includes('looks like Bob')), JSON.stringify(rows));
+  expect(rows.some((r) => r.includes('Bob') && r.includes('looks like Alice')), JSON.stringify(rows));
+  await shot(tw, '20-lookalikes');
+}, tw);
+await check('T-APP-28', '"Which one?" catch: not preselected, kept out of Share, resolved by "It\'s Bob"', async () => {
+  await tw.evaluate(async () => {
+    const db = await import('/js/db.js');
+    const { dayKey } = await import('/js/rules.js');
+    const c = new OffscreenCanvas(320, 240);
+    c.getContext('2d').fillRect(0, 0, 320, 240);
+    const jpeg = await (await c.convertToBlob({ type: 'image/jpeg' })).arrayBuffer();
+    await db.deleteCandidatesFor(['b'], dayKey(window.snipecam.now()));
+    await db.putCandidate({ id: 'twin-cand', memberId: 'lookalike:a+b', day: dayKey(window.snipecam.now()), jpeg, thumb: '',
+      quality: 0.6, similarity: 0.8, box: [0, 0, 50, 50], inFrame: ['lookalike:a+b'], seenAt: window.snipecam.now(), status: 'pending' });
+    window.__shares = [];
+  });
+  await tw.tap('[data-view="roster"] [data-go="watch"]');
+  await tw.tap('[data-go="inbox"]');
+  await tw.waitForSelector('#inbox-grid .cand:has-text("Alice or Bob?")');
+  expect(!(await tw.$('#inbox-grid .cand.selected:has-text("Alice or Bob?")')), 'unresolved catch should not be preselected');
+  await tw.tap('#inbox-grid .cand:has-text("Alice or Bob?") .pick'); // select it anyway
+  await tw.tap('#btn-share-selected');
+  await tw.waitForFunction(() => /Choose which one first: Alice or Bob\?/.test(document.getElementById('toast').textContent));
+  await tw.tap('#btn-share-done');
+  await tw.tap('#inbox-grid .cand:has-text("Alice or Bob?") .open');
+  await tw.waitForSelector('#cand-which:not([hidden])');
+  await shot(tw, '21-which-twin');
+  await tw.tap('#cand-which-buttons button:has-text("It\'s Bob")');
+  await tw.waitForFunction(() => document.getElementById('cand-title').textContent === 'Bob');
+  const st = await dbState(tw);
+  expect(st.cands.includes('b') && !st.cands.some((c) => c.startsWith('lookalike:')), JSON.stringify(st.cands));
+}, tw);
+await tw.context().close();
 
 // --- P6: home-screen app, rehearsal warning, offline ---
 const hp = await newPage();

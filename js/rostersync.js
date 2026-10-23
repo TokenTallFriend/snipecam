@@ -54,6 +54,7 @@ export function mergeRosters(local, incoming, { newId }) {
   const current = new Map(local.map((m) => [m.id, m])); // latest version of each local member
   const changed = new Map();
   const report = { added: 0, merged: 0, unchanged: 0, photosAdded: 0, duplicatesSkipped: 0, overCap: 0, conflicts: [] };
+  const idMap = new Map(); // imported id → id on this device
 
   for (const inc of incoming) {
     const sameName = byName.get(nameKey(inc.name)) ?? [];
@@ -66,6 +67,7 @@ export function mergeRosters(local, incoming, { newId }) {
     }
 
     if (target) {
+      idMap.set(inc.id, target.id);
       const base = current.get(target.id);
       const r = combine(base, inc);
       const slack = base.slack || inc.slack || '';
@@ -83,7 +85,8 @@ export function mergeRosters(local, incoming, { newId }) {
     } else {
       const name = takenNames.has(nameKey(inc.name)) ? uniqueName(inc.name, takenNames) : inc.name;
       const id = current.has(inc.id) ? newId() : inc.id;
-      const added = { ...inc, id, name, embeddings: inc.embeddings.slice(0, MAX_PHOTOS), thumbs: (inc.thumbs ?? []).slice(0, MAX_PHOTOS) };
+      idMap.set(inc.id, id);
+      const added = { ...inc, id, name, lookalikes: [], embeddings: inc.embeddings.slice(0, MAX_PHOTOS), thumbs: (inc.thumbs ?? []).slice(0, MAX_PHOTOS) };
       report.overCap += Math.max(0, inc.embeddings.length - MAX_PHOTOS);
       report.added++;
       report.photosAdded += added.embeddings.length;
@@ -93,6 +96,21 @@ export function mergeRosters(local, incoming, { newId }) {
       byId.set(id, added);
       if (!byName.has(nameKey(name))) byName.set(nameKey(name), [added]);
     }
+  }
+  // Lookalike links (twins) carry over, translated to this device's ids and added to any it already has.
+  for (const inc of incoming) {
+    const id = idMap.get(inc.id);
+    const base = current.get(id);
+    const extra = (inc.lookalikes ?? []).map((x) => idMap.get(x) ?? (current.has(x) ? x : null)).filter((x) => x && x !== id);
+    const links = [...new Set([...(base.lookalikes ?? []), ...extra])];
+    if (links.length === (base.lookalikes ?? []).length) continue;
+    const updated = { ...base, lookalikes: links };
+    current.set(id, updated);
+    if (!changed.has(id)) {
+      report.merged++;
+      report.unchanged = Math.max(0, report.unchanged - 1);
+    }
+    changed.set(id, updated);
   }
   return { changed: [...changed.values()], report };
 }

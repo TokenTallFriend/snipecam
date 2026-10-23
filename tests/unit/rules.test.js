@@ -29,8 +29,10 @@ test('T-RUL-4: decide — replace only with better quality and comparable simila
 });
 
 test('T-RUL-5: tags — everyone in the photo; members locked today flagged', () => {
-  assert.deepEqual(tags({ memberId: 'a', inFrame: ['a', 'b', 'c'] }, ['c']), { tag: ['a', 'b'], flagged: ['c'] });
-  assert.deepEqual(tags({ memberId: 'a' }, []), { tag: ['a'], flagged: [] });
+  assert.deepEqual(tags({ memberId: 'a', inFrame: ['a', 'b', 'c'] }, ['c']), { tag: ['a', 'b'], flagged: ['c'], unsure: [] });
+  assert.deepEqual(tags({ memberId: 'a' }, []), { tag: ['a'], flagged: [], unsure: [] });
+  // An unresolved twin ("A or B?") in someone else's photo can't be tagged automatically
+  assert.deepEqual(tags({ memberId: 'a', inFrame: ['a', 'lookalike:t1+t2'] }, []), { tag: ['a'], flagged: [], unsure: ['lookalike:t1+t2'] });
 });
 
 test('T-RUL-6: isExpired false same day, true after midnight', () => {

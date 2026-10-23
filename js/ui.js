@@ -38,6 +38,7 @@ export function renderFaces(canvas, results, { videoW, videoH, crop, debug = fal
     if (!isMember && !debug) continue;
     const [x, y, bw, bh] = mapBox(face.box, crop.w, crop.h, w, h);
     const isLocked = isMember && locked.has(match.member.id);
+    const isUnsure = isMember && !!match.member.lookalikeGroup; // "Ann or Amy?" 
     let label;
     if (isMember) {
       const name = isLocked ? `🔒 ${match.member.name} · sniped today` : match.member.name;
@@ -45,7 +46,7 @@ export function renderFaces(canvas, results, { videoW, videoH, crop, debug = fal
     } else {
       label = `${top ? `${top.member.name}? ${top.similarity.toFixed(2)}` : 'face'} · ${face.box[2]}px`;
     }
-    const color = isMember && !isLocked ? '#22c55e' : 'rgba(200,200,200,0.9)';
+    const color = isUnsure ? '#f59e0b' : isMember && !isLocked ? '#22c55e' : 'rgba(200,200,200,0.9)';
     ctx.strokeStyle = color;
     ctx.strokeRect(x, y, bw, bh);
     const tw = ctx.measureText(label).width + 10;
@@ -167,6 +168,7 @@ export function renderRoster(members, { onEdit, status = new Map() }) {
       el('span', { className: 'info' }, el('b', { textContent: m.name }),
         el('small', { textContent: detail }),
         status.has(m.id) ? el('small', { textContent: ROW_STATUS[status.get(m.id)] }) : null,
+        m.lookalikes?.length ? el('small', { textContent: `👯 looks like ${m.lookalikes.map((id) => members.find((x) => x.id === id)?.name).filter(Boolean).join(', ')}` }) : null,
         n < 3 ? el('small', { className: 'warn', textContent: 'Add more photos for better recognition' }) : null));
     row.addEventListener('click', () => onEdit(m));
     list.append(row);
@@ -237,11 +239,38 @@ export function renderCandidate(card, members) {
   sel.replaceChildren(new Option('—', ''), ...members.filter((m) => m.id !== card.c.memberId).map((m) => new Option(m.name, m.id)));
 }
 
-export function renderShareStep({ card, index, total, tagLine, flagged }) {
+export function renderShareStep({ card, index, total, tagLine, flagged, unsure }) {
   $('share-title').textContent = `Photo ${index + 1} of ${total}`;
   $('share-photo').src = card.url;
   $('share-tags').textContent = tagLine;
-  $('share-flags').textContent = flagged ? `⚠ Already sniped today, not tagged: ${flagged}` : '';
+  $('share-flags').textContent = [
+    flagged && `⚠ Already sniped today, not tagged: ${flagged}`,
+    unsure && `⚠ Also in photo, tag the right one yourself: ${unsure}`,
+  ].filter(Boolean).join(' · ');
+}
+
+// Lookalike links in the member editor. linked: Member[]; others: Member[] that could be added.
+export function renderMemberLookalikes(linked, others, { onAdd, onRemove }) {
+  $('member-lookalikes').hidden = !linked.length && !others.length;
+  const chips = $('lookalike-chips');
+  chips.replaceChildren(...linked.map((m) => {
+    const b = el('button', { className: 'chip', ariaLabel: `Unlink ${m.name}` }, `👯 ${m.name}`, el('span', { textContent: ' ✕' }));
+    b.addEventListener('click', () => onRemove(m.id));
+    return b;
+  }));
+  const sel = $('lookalike-add');
+  sel.replaceChildren(new Option('—', ''), ...others.map((m) => new Option(m.name, m.id)));
+  sel.onchange = () => sel.value && onAdd(sel.value);
+}
+
+// "Which one is it?" buttons for an unresolved lookalike catch.
+export function renderWhich(people, onPick) {
+  $('cand-which').hidden = !people.length;
+  $('cand-which-buttons').replaceChildren(...people.map((m) => {
+    const b = el('button', { className: 'primary', textContent: `It's ${m.name}` });
+    b.addEventListener('click', () => onPick(m.id));
+    return b;
+  }));
 }
 
 export function renderMemberToday(statusText) {

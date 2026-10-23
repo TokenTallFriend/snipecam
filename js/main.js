@@ -14,9 +14,10 @@ import { initInbox, showInbox, refreshInbox } from './inbox.js';
 import { getMode } from './modes/index.js';
 import { dayKey, reminderDue } from './rules.js';
 import { now } from './clock.js';
+import { parseGroupKey } from './lookalikes.js';
 import * as ui from './ui.js';
 
-export const VERSION = 'P6.2';
+export const VERSION = 'P6.3';
 
 const CLOCK_MS = 10_000;
 
@@ -52,7 +53,8 @@ const ctx = {
   log,
   onConfirmed(memberId) {
     if (app.settings.alert === 'sound') beep();
-    log(`Sighting confirmed: ${app.members.find((m) => m.id === memberId)?.name ?? memberId}`);
+    const ids = parseGroupKey(memberId) ?? [memberId];
+    log(`Sighting confirmed: ${ids.map((id) => app.members.find((m) => m.id === id)?.name ?? id).join(' or ')}`);
   },
   onCandidate() {
     refreshBadge();

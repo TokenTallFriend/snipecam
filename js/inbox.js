@@ -5,6 +5,7 @@ import { dayKey, tags, msUntilDeadline, inRehearsalWindow } from './rules.js';
 import { now } from './clock.js';
 import { tagText, snipeFilename, toFile, copyText, shareFile, saveFiles } from './share.js';
 import { log } from './log.js';
+import { parseGroupKey, groupName } from './lookalikes.js';
 import * as ui from './ui.js';
 
 const $ = (id) => document.getElementById(id);
@@ -56,7 +57,8 @@ async function load() {
   state.locked = new Set((await db.listLocks(state.day)).map((l) => l.memberId));
   const ids = new Set(state.cands.map((c) => c.id));
   for (const id of [...state.selected]) if (!ids.has(id)) state.selected.delete(id);
-  for (const c of state.cands) if (!previous.has(c.id)) state.selected.add(c.id); // new catches start selected
+  // New catches start selected, except "which twin?" ones, which must be resolved first.
+  for (const c of state.cands) if (!previous.has(c.id) && !parseGroupKey(c.memberId)) state.selected.add(c.id);
   const keys = new Set(state.cands.map(photoKey));
   for (const [key, url] of state.urls) {
     if (!keys.has(key)) {
@@ -69,7 +71,21 @@ async function load() {
 // A better photo replaces a catch under the same id, so the photo cache is keyed by id + time seen.
 const photoKey = (c) => `${c.id}:${c.seenAt}`;
 
-const memberById = (id) => deps.getMembers().find((m) => m.id === id) ?? { id, name: 'Unknown', slack: '' };
+function memberById(id) {
+  const members = deps.getMembers();
+  const group = parseGroupKey(id);
+  if (group) return { id, name: groupName(group, new Map(members.map((m) => [m.id, m]))), slack: '' };
+  return members.find((m) => m.id === id) ?? { id, name: 'Unknown', slack: '' };
+}
+
+const unresolved = (c) => !!parseGroupKey(c.memberId);
+
+// Drops "which twin?" catches from a share/save list, telling the user why.
+function resolvedOnly(list) {
+  const pending = list.filter(unresolved);
+  if (pending.length) ui.toast(`Choose which one first: ${pending.map((c) => memberById(c.memberId).name).join(', ')}`, 5000);
+  return list.filter((c) => !unresolved(c));
+}
 
 // Display info for a candidate: title, others in the photo, warnings.
 function card(c) {
@@ -80,6 +96,7 @@ function card(c) {
   const lockedOthers = others.filter((id) => state.locked.has(id)).map((id) => memberById(id).name);
   if (lockedOthers.length) flags.push(`already sniped today: ${lockedOthers.join(', ')}`);
   if (inRehearsalWindow(c.seenAt, deps.getSettings().rehearsals)) flags.push('near rehearsal time (rule 1c)');
+  if (unresolved(c)) flags.push('tap to choose which one');
   return {
     c,
     url: state.urls.get(key),
@@ -105,6 +122,7 @@ const selectedCands = () => state.cands.filter((c) => state.selected.has(c.id)).
 function openCandidate(c) {
   state.current = c;
   ui.renderCandidate(card(c), deps.getMembers());
+  ui.renderWhich((parseGroupKey(c.memberId) ?? []).map(memberById), reassign);
   ui.showView('candidate');
 }
 
@@ -138,6 +156,7 @@ async function accept(c, tagged, via) {
 // ---------- Share flow: one photo per post ----------
 
 function startShare(list) {
+  list = resolvedOnly(list);
   if (!list.length) return;
   state.queue = list;
   state.qi = 0;
@@ -151,7 +170,7 @@ function step() {
   while (state.qi < state.queue.length && state.locked.has(state.queue[state.qi].memberId)) state.qi++;
   const c = state.queue[state.qi];
   if (!c) return null;
-  const { tag, flagged } = tags(c, [...state.locked]);
+  const { tag, flagged, unsure } = tags(c, [...state.locked]);
   const members = tag.map(memberById);
   return {
     c,
@@ -159,6 +178,7 @@ function step() {
     card: card(c),
     tagLine: tagText(members),
     flagged: flagged.map((id) => memberById(id).name).join(', '),
+    unsure: unsure.map((id) => memberById(id).name).join(', '),
     file: toFile(db.candidateBlob(c), snipeFilename(c.seenAt, members.map((m) => m.name))),
   };
 }
@@ -200,7 +220,7 @@ async function finishShare() {
 
 // Save: hands all selected photos to the share sheet ("Save N Images") or downloads them.
 function saveSelected() {
-  const list = selectedCands();
+  const list = resolvedOnly(selectedCands());
   if (!list.length) return;
   const files = list.map((c) => toFile(db.candidateBlob(c), snipeFilename(c.seenAt, [memberById(c.memberId).name])));
   saveFiles(files)

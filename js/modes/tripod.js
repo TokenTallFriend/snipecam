@@ -4,6 +4,7 @@ import { createTracker } from '../tracker.js';
 import { dayKey, decide } from '../rules.js';
 import { quality } from '../detector.js';
 import { toJpegBlob, cropFace } from '../capture.js';
+import { isLockedId } from '../lookalikes.js';
 
 let tracker = null;
 let locked = new Set();
@@ -24,7 +25,7 @@ async function handleSightings(ctx, sightings) {
       const existing = await ctx.db.getCandidate(e.memberId, sightingDay);
       const verdict = decide({
         existing,
-        locked: locked.has(e.memberId) || sightingDay !== day,
+        locked: isLockedId(e.memberId, locked) || sightingDay !== day,
         incoming: { quality: e.quality, similarity: e.meta.similarity },
       });
       if (verdict === 'discard') continue;
@@ -67,7 +68,7 @@ export default {
     const matched = results.filter((r) => r.match);
     const inFrame = matched.map((r) => r.match.member.id);
     const hits = matched
-      .filter((r) => !locked.has(r.match.member.id) && r.face.box[2] >= ctx.settings.minCandidateFacePx)
+      .filter((r) => !isLockedId(r.match.member.id, locked) && r.face.box[2] >= ctx.settings.minCandidateFacePx)
       .map((r) => ({
         memberId: r.match.member.id,
         quality: quality(r.face, r.match.similarity, bitmap.width, bitmap.height),

@@ -196,3 +196,33 @@ test('T-DB-13', 'deleteCandidatesFor removes only the named members\' catches fo
   await db.deleteCandidatesFor(['a', 'zz'], TODAY);
   assert.deepEqual((await db.listCandidates()).map((c) => `${c.memberId}@${c.day}`).sort(), ['a@2026-10-22', 'b@2026-10-21']);
 });
+
+import { groupMember, groupKey } from '../../js/lookalikes.js';
+
+test('T-DB-15', 'reassigning onto a member who already has a sharper photo keeps the sharper one', async () => {
+  await db.clearAll();
+  const weak = await db.putCandidate(cand('lookalike:t1+t2', TODAY, { quality: 0.2 }));
+  const strong = await db.putCandidate(cand('t1', TODAY, { quality: 0.9 }));
+  const kept = await db.reassignCandidate(weak.id, 't1');
+  assert.equal(kept.id, strong.id);
+  assert.deepEqual((await db.listCandidates(TODAY)).map((c) => c.id), [strong.id]);
+});
+
+test('T-MOD-10', 'one twin alone → "A or B?" catch under the group key; skipped only when both twins are locked', async () => {
+  const byId = new Map([['t1', { id: 't1', name: 'Ann' }], ['t2', { id: 't2', name: 'Amy' }]]);
+  const twin = () => ({ face: { box: [100, 100, 120, 120], score: 0.9 }, top: null, match: { member: groupMember(['t1', 't2'], byId), similarity: 0.8 } });
+  const key = groupKey(['t1', 't2']);
+  await db.clearAll();
+  await db.lock(['t1'], dayKey(NOON), 'shared'); // one twin already sniped: the face could still be the other
+  let ctx = fakeCtx();
+  await tripod.start(ctx);
+  await play(ctx, [[twin()], [twin()], ...Array(12).fill([])]);
+  assert.equal(ctx.candidates.length, 1);
+  assert.equal(ctx.candidates[0].c.memberId, key);
+  await db.clearAll();
+  await db.lock(['t1', 't2'], dayKey(NOON), 'shared');
+  ctx = fakeCtx();
+  await tripod.start(ctx);
+  await play(ctx, [[twin()], [twin()], ...Array(12).fill([])]);
+  assert.equal(ctx.candidates.length, 0);
+});

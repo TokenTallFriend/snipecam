@@ -26,6 +26,7 @@ On-device, in-browser face recognition for the club sniping game. **Passive (tri
 | Slack tags | The iOS share sheet sends the photo only (with text, Slack took a link instead). Tags are copied to the clipboard, but pasted `@handle` text isn't a real Slack mention: that needs Slack's @-picker or the Slack API with member IDs → P7 (Slack app). **Save** is the main path for now. |
 | Zoom | Camera's own zoom (`applyConstraints({zoom})`) when the browser exposes it, so detail comes from the full sensor; digital crop otherwise or as top-up. Preview scales to match. |
 | Roster sync | Export/import **merges**: members matched by id, then name (case/space-insensitive); photos combined, duplicates skipped (re-import is harmless); local id/name/handle kept (empty handle filled); same name but clearly different face (best similarity < 0.5) → kept separate as "Name (2)" and reported; ≤ 30 photos per member; additive (deletions don't spread). Workflow: enroll on laptop, export, import on phone (and back). |
+| Lookalikes (twins) | Face model can't separate identical twins (unlinked, they fail the margin rule or get guessed). Members can be linked in the Roster ("Looks like", saved on both). Margin ignores lookalikes (still applies vs everyone else). Frame with all of them → each face a different twin (both tagged, so who-is-who doesn't matter). Fewer → amber "A or B?" catch stored under a group key; Inbox asks "It's A / It's B" before it can be shared or saved; skipped only if every twin is locked. Links carry over in roster merges. |
 | Locked members | Still recognized (so they can't be mistaken for someone else) but drawn gray with 🔒; no photos or alerts. |
 | Offline | `sw.js`: app files network-first (fresh when online, cached offline); pinned face library cache-first; models in IndexedDB (by the library). |
 | Out of scope (v1) | Slack auto-post, scoreboard, background operation (iOS forbids), other modes. |
@@ -86,6 +87,7 @@ Source: *Sniping Rules (Updated Spring 2026)*. Game logic lives in `js/rules.js`
 │   ├── enroll.js           Photos → validated embeddings + thumbnails
 │   ├── roster.js           Roster + member editor screens, today's lock actions, export/import
 │   ├── rostersync.js       [pure] Merge an imported roster into this device's (rosters grow together)
+│   ├── lookalikes.js       [pure] Lookalike groups (twins): group keys, names, lock rule
 │   ├── inbox.js            Inbox grid, candidate detail, share flow (one photo per post)
 │   ├── clock.js            App clock (`?clockOffset` test hook)
 │   ├── db.js               IndexedDB: members, candidates, locks; export/import
@@ -116,7 +118,7 @@ Source: *Sniping Rules (Updated Spring 2026)*. Game logic lives in `js/rules.js`
 ## 4. Data Model
 
 ```js
-Member    { id, name, slack /* "@alice" */, embeddings: number[][] /* 1024-d, 3–10 */,
+Member    { id, name, slack /* "@alice" */, lookalikes: id[] /* twins; symmetric */, embeddings: number[][] /* 1024-d, ≤ 30 */,
             thumbs: string[] /* 96px dataURL */, createdAt }
 
 Face      { box: [x, y, w, h] /* source px */, score, embedding: Float32Array }
@@ -266,7 +268,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-RUL-2 [U] `decide`: locked → discard regardless of quality
 - [x] T-RUL-3 [U] `decide`: no existing → keep; existing dismissed → keep
 - [x] T-RUL-4 [U] `decide`: lower existing → replace; higher/equal → discard
-- [x] T-RUL-5 [U] `tags`: all inFrame members tagged; locked ones in `flagged`
+- [x] T-RUL-5 [U] `tags`: all inFrame members tagged; locked ones in `flagged`; unresolved twins in `unsure`
 - [x] T-RUL-6 [U] `isExpired` false same day, true after midnight
 - [x] T-RUL-7 [U] `msUntilDeadline` at 23:00 = 3 600 000
 - [x] T-RUL-8 [U] `inRehearsalWindow` true at start−30, end+30; false at start−31; weekday respected
@@ -291,6 +293,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-MOD-7 [B] Faces < `minCandidateFacePx` never become candidates (rule 3)
 - [x] T-MOD-8 [B] Stop mid-sighting flushes it into a candidate
 - [x] T-MOD-9 [B] Candidate saved at confirmation (still in view), then upgraded in place
+- [x] T-MOD-10 [B] One twin alone → catch under group key; skipped only when both twins locked
 
 ### 7.4 `log.js`
 | Function | Purpose |
@@ -384,6 +387,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-MAT-6 [U] picks highest; best of member's photos; 0-embedding member ignored
 - [x] T-MAT-7 [B] Real faces: 2 enrolled people recognized (0.70, 0.72), stranger unmatched
 - [x] T-MAT-8 [U] `matchFaces` returns top even when unmatched; skips faces without embedding
+- [x] T-LOOK-1..5 [U] Groups (incl. triplets), keys, lock rule; margin ignores linked twin but not others; one twin → "A or B?", both → distinct; links survive roster merge
 
 ### 7.9 `tracker.js` [pure]
 | Function | Purpose |
@@ -451,6 +455,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-DB-11 [B] `dismissCandidates` marks dismissed, drops photo; dismissed not listed
 - [x] T-DB-12 [B] `reassignCandidate` moves catch, replaces target's pending one
 - [x] T-DB-13 [B] `deleteCandidatesFor` removes only named members' catches that day
+- [x] T-DB-15 [B] Reassign onto a member with a sharper photo keeps the sharper one
 - [x] T-DB-14 [B] Merge import: same person enrolled elsewhere (different id, name in other case) gains photos, keeps local id
 - [x] T-SYNC-1..10 [U] `mergeRosters`: id match, name match, idempotent re-import, two-way growth, handle fill, name conflict kept separate, ids authoritative, 30-photo cap, `nameKey`
 
@@ -539,6 +544,9 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-APP-24 Works offline after first load (Chromium: service worker + cached models). iPhone: Airplane Mode ✓
 - [x] T-APP-25 Locked member → gray "🔒 Name · sniped today" label, no new photo; Reset today restores catching
 - [x] T-APP-26 Zoom without camera zoom → digital: preview scales, face still recognized
+- [x] T-APP-27 Roster "Looks like" link saved on both members (also fixed: editing a member without thumbnails failed to save)
+- [x] T-APP-28 "Which one?" catch: not preselected, blocked from Share with a message, resolved by "It's Bob"
+- [ ] T-LOOK-6 [M] Real twins: link them; both in view → one catch each; one alone → "A or B?" in Inbox
 
 ---
 

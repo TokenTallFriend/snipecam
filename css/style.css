@@ -123,6 +123,10 @@ fieldset .field:last-of-type { border-radius: 0 0 10px 10px; border-bottom: 0; }
 .settings-actions button { flex: 1; }
 .version { color: var(--muted); font-size: 13px; text-align: center; }
 
+/* Lookalike chips */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding-left: 12px; border-radius: 22px; }
+
 /* Rehearsal schedule */
 .rehearsal { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
 .rehearsal select, .rehearsal input {

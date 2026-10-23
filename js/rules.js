@@ -31,10 +31,13 @@ export function decide({ existing, locked, incoming }) {
 }
 
 // Rule 4: tag everyone recognized in the photo. Members already sniped today are flagged for the user to decide.
+// Unresolved lookalikes ("A or B?" group keys, see lookalikes.js) can't be tagged automatically: listed as unsure.
 export function tags(candidate, lockedIds) {
   const locked = new Set(lockedIds);
   const everyone = [...new Set([candidate.memberId, ...(candidate.inFrame ?? [])])];
-  return { tag: everyone.filter((id) => !locked.has(id)), flagged: everyone.filter((id) => locked.has(id)) };
+  const unsure = everyone.filter((id) => id.startsWith('lookalike:'));
+  const people = everyone.filter((id) => !unsure.includes(id));
+  return { tag: people.filter((id) => !locked.has(id)), flagged: people.filter((id) => locked.has(id)), unsure };
 }
 
 // Daily post-by-midnight reminder: due once per day after reminderAt ("HH:MM").

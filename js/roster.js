@@ -22,7 +22,10 @@ export function initRoster({ onChanged, onLocks }) {
   $('btn-reset-today').addEventListener('click', () => setToday(null));
   $('btn-add-member').addEventListener('click', () => openEditor(null));
   $('btn-member-back').addEventListener('click', showRoster);
-  $('btn-member-save').addEventListener('click', save);
+  $('btn-member-save').addEventListener('click', () => save().catch((err) => {
+    log(err, 'warn');
+    ui.toast(`Couldn't save: ${err.message}`, 6000);
+  }));
   $('btn-member-delete').addEventListener('click', remove);
   $('member-photos').addEventListener('change', async (e) => {
     const files = [...e.target.files];
@@ -83,15 +86,29 @@ function openEditor(member) {
   editing = member
     ? {
       id: member.id, name: member.name, slack: member.slack, createdAt: member.createdAt, skipped: [],
-      photos: member.embeddings.map((embedding, i) => ({ embedding, thumb: member.thumbs[i], note: '' })),
+      photos: member.embeddings.map((embedding, i) => ({ embedding, thumb: member.thumbs?.[i] ?? '', note: '' })),
+      lookalikes: [...(member.lookalikes ?? [])], originalLookalikes: [...(member.lookalikes ?? [])],
     }
-    : { id: null, name: '', slack: '', createdAt: null, photos: [], skipped: [] };
+    : { id: null, name: '', slack: '', createdAt: null, photos: [], skipped: [], lookalikes: [], originalLookalikes: [] };
   $('member-name').value = editing.name;
   $('member-slack').value = editing.slack;
   flagOutliers();
   render();
   renderToday();
+  renderLookalikes();
   ui.showView('member');
+}
+
+async function renderLookalikes() {
+  const members = (await db.listMembers()).filter((m) => m.id !== editing.id);
+  ui.renderMemberLookalikes(
+    members.filter((m) => editing.lookalikes.includes(m.id)),
+    members.filter((m) => !editing.lookalikes.includes(m.id)),
+    {
+      onAdd: (id) => { editing.lookalikes.push(id); renderLookalikes(); },
+      onRemove: (id) => { editing.lookalikes = editing.lookalikes.filter((x) => x !== id); renderLookalikes(); },
+    },
+  );
 }
 
 function render() {
@@ -131,15 +148,24 @@ async function save() {
   const name = $('member-name').value.trim();
   if (!name) return ui.toast('Enter a name');
   if (!editing.photos.length) return ui.toast('Add at least one photo with a clear face');
-  const member = await db.saveMember({
+  const member = {
     id: editing.id ?? crypto.randomUUID(),
     name,
     slack: $('member-slack').value,
     embeddings: editing.photos.map((p) => p.embedding),
-    thumbs: editing.photos.map((p) => p.thumb),
+    thumbs: editing.photos.map((p) => p.thumb ?? ''),
+    lookalikes: editing.lookalikes,
     createdAt: editing.createdAt ?? Date.now(),
     updatedAt: Date.now(),
-  });
+  };
+  // Lookalike links go both ways: update the other side of every added or removed link in the same save.
+  const added = editing.lookalikes.filter((id) => !editing.originalLookalikes.includes(id));
+  const removed = editing.originalLookalikes.filter((id) => !editing.lookalikes.includes(id));
+  const others = (await db.listMembers()).filter((m) => added.includes(m.id) || removed.includes(m.id)).map((m) => ({
+    ...m,
+    lookalikes: added.includes(m.id) ? [...new Set([...(m.lookalikes ?? []), member.id])] : (m.lookalikes ?? []).filter((x) => x !== member.id),
+  }));
+  await db.saveMembers([member, ...others]);
   log(`Saved member ${member.name} (${member.embeddings.length} photos)`);
   await onMembersChanged();
   await showRoster();

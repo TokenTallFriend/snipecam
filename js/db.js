@@ -68,6 +68,7 @@ export function validateMember(m) {
     errors.push(`embeddings must be ${EMBEDDING_SIZE} numbers each`);
   }
   if (m.thumbs !== undefined && (!Array.isArray(m.thumbs) || !m.thumbs.every((t) => typeof t === 'string'))) errors.push('thumbs must be text');
+  if (m.lookalikes !== undefined && (!Array.isArray(m.lookalikes) || !m.lookalikes.every((t) => typeof t === 'string'))) errors.push('lookalikes must be member ids');
   return errors;
 }
 
@@ -78,6 +79,7 @@ function normalizeMember(m) {
     slack: normalizeSlack(m.slack),
     embeddings: m.embeddings.map((e) => Float32Array.from(e)),
     thumbs: m.thumbs ?? [],
+    lookalikes: [...new Set(m.lookalikes ?? [])].filter((id) => id !== m.id),
     createdAt: m.createdAt ?? Date.now(),
     updatedAt: m.updatedAt ?? Date.now(),
   };
@@ -99,11 +101,26 @@ export async function saveMember(m) {
   return member;
 }
 
-// Deletes a member and everything stored about them (candidates, locks).
+// Saves several members in one transaction (e.g. both sides of a lookalike link).
+export async function saveMembers(list) {
+  for (const m of list) {
+    const errors = validateMember(m);
+    if (errors.length) throw new Error(`Invalid member ${m?.name ?? ''}: ${errors.join(', ')}`);
+  }
+  const t = await transaction('members', 'readwrite');
+  for (const m of list) t.objectStore('members').put(normalizeMember(m));
+  await complete(t);
+}
+
+// Deletes a member and everything stored about them (candidates, locks, lookalike links to them).
 export async function deleteMember(id) {
   const t = await transaction(['members', 'candidates', 'locks'], 'readwrite');
   const range = IDBKeyRange.bound([id, ''], [id, '￿']);
-  t.objectStore('members').delete(id);
+  const members = t.objectStore('members');
+  members.delete(id);
+  for (const m of await request(members.getAll())) {
+    if (m.lookalikes?.includes(id)) members.put({ ...m, lookalikes: m.lookalikes.filter((x) => x !== id) });
+  }
   t.objectStore('locks').delete(range);
   const cursorReq = t.objectStore('candidates').index('memberDay').openCursor(range);
   cursorReq.onsuccess = () => {
@@ -157,13 +174,19 @@ export async function deleteCandidates(ids) {
   await complete(t);
 }
 
-// "Wrong person": moves a candidate to another member (overwriting that member's pending one for the day).
+// "Wrong person" / "which twin": moves a candidate to another member. If that member already has a pending catch
+// today with a strictly better photo, that one is kept and this one is removed. Returns the surviving candidate.
 export async function reassignCandidate(id, newMemberId) {
   const t = await transaction('candidates', 'readwrite');
   const store = t.objectStore('candidates');
   const c = await request(store.get(id));
   if (!c) throw new Error('candidate not found');
   const clash = await request(store.index('memberDay').get([newMemberId, c.day]));
+  if (clash && clash.id !== id && clash.status === 'pending' && clash.quality > c.quality) {
+    store.delete(id);
+    await complete(t);
+    return clash;
+  }
   if (clash && clash.id !== id) store.delete(clash.id);
   const inFrame = [...new Set([newMemberId, ...(c.inFrame ?? []).filter((m) => m !== c.memberId)])];
   const moved = { ...c, memberId: newMemberId, inFrame, status: 'pending' };

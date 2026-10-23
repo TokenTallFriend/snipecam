@@ -55,6 +55,10 @@
     <fieldset>
       <label class="field"><span>Wrong person? Change to</span><select id="cand-reassign"></select></label>
     </fieldset>
+    <fieldset id="cand-which" hidden>
+      <legend>Which one is it?</legend>
+      <div id="cand-which-buttons" class="settings-actions"></div>
+    </fieldset>
     <div class="settings-actions">
       <button id="btn-cand-share" class="primary">Share</button>
       <button id="btn-cand-dismiss" class="danger">Not them</button>
@@ -89,6 +93,12 @@
     <fieldset>
       <label class="field"><span>Name</span><input id="member-name" autocomplete="off" maxlength="60"></label>
       <label class="field"><span>Slack handle</span><input id="member-slack" placeholder="@handle" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    </fieldset>
+    <fieldset id="member-lookalikes" hidden>
+      <legend>Looks like</legend>
+      <p class="note">For identical twins: a photo of just one of them asks you which one it is; a photo of both tags both.</p>
+      <div id="lookalike-chips" class="chips"></div>
+      <label class="field"><span>Add lookalike</span><select id="lookalike-add"></select></label>
     </fieldset>
     <div id="member-today" class="today-box" hidden>
       <p id="member-today-status"></p>
