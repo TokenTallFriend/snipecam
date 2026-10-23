@@ -127,7 +127,7 @@ function makeInput(f, value, cameras) {
   if (f.type === 'select' || f.type === 'camera') {
     const sel = document.createElement('select');
     const options = f.type === 'camera'
-      ? [['', 'Default (rear)'], ...cameras.map((c, i) => [c.deviceId, c.label || `Camera ${i + 1}`])]
+      ? [['', 'Default (rear)'], ...cameras.map((c, i) => [c.deviceId, c.label || `Camera ${i + 1}`])] // every lens the browser exposes
       : f.options;
     for (const [val, label] of options) sel.append(new Option(label, val, false, String(val) === String(value ?? '')));
     return sel;

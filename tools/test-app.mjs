@@ -143,6 +143,25 @@ await check('T-MAIN-2', 'Loop never exceeds processFps (no overlapping ticks)', 
   expect(fps <= 2.2, `achieved ${fps} fps > processFps 2`);
 });
 
+await check('T-APP-29', 'Zooming in restarts the camera asking for 4K; Settings shows what the camera delivered', async () => {
+  const before = await page.evaluate(() => document.getElementById('video').videoWidth);
+  await page.tap('[data-go="settings"]');
+  await page.selectOption('select[name="zoom"]', '2');
+  await page.waitForFunction((b) => document.getElementById('video').videoWidth > b, before, { timeout: 15000 });
+  const w = await page.evaluate(() => document.getElementById('video').videoWidth);
+  expect(w >= 3840, `zoomed capture is ${w} px wide, expected 4K`);
+  await page.tap('[data-view="settings"] [data-go="watch"]');
+  await page.tap('[data-go="settings"]');
+  // Settings lists cameras before drawing, so wait for the refreshed text.
+  await page.waitForFunction(() => /^In use: .*: 3840×2160/.test(document.getElementById('camera-info').textContent), null, { timeout: 10000 })
+    .catch(() => {});
+  const info = await page.textContent('#camera-info');
+  expect(/^In use: .*: 3840×2160/.test(info), info);
+  await page.selectOption('select[name="zoom"]', '1'); // back to 1× → back to normal resolution
+  await page.waitForFunction(() => document.getElementById('video').videoWidth < 3840, null, { timeout: 15000 });
+  await page.tap('[data-view="settings"] [data-go="watch"]');
+}, page);
+
 await check('T-APP-7', 'Stop → Ready, camera released', async () => {
   await page.tap('#btn-start');
   await page.waitForFunction(() => document.getElementById('status-state').textContent === 'Ready');

@@ -24,7 +24,7 @@ On-device, in-browser face recognition for the club sniping game. **Passive (tri
 | Hosting | GitHub Pages (public repo, HTTPS). Dev on `localhost`. |
 | Storage | IndexedDB per device: roster, candidates (JPEG), daily lock log. Settings in localStorage. **No face data in the repo.** |
 | Slack tags | The iOS share sheet sends the photo only (with text, Slack took a link instead). Tags are copied to the clipboard, but pasted `@handle` text isn't a real Slack mention: that needs Slack's @-picker or the Slack API with member IDs → P7 (Slack app). **Save** is the main path for now. |
-| Zoom | Camera's own zoom (`applyConstraints({zoom})`) when the browser exposes it, so detail comes from the full sensor; digital crop otherwise or as top-up. Preview scales to match. |
+| Zoom | Camera's own zoom (`applyConstraints({zoom})`) when the browser exposes it; otherwise a digital crop. iOS Safari generally exposes neither camera zoom nor lens switching, so when zoom > 1× the app requests a **4K** feed and crops that (2× of 4K = full 1080p detail; detector cost unchanged); 1× stays 1080p for battery. Preview scales to match. Settings and log show what the camera delivered (resolution, max, zoom support); the Camera picker lists every lens the browser exposes. |
 | Roster sync | Export/import **merges**: members matched by id, then name (case/space-insensitive); photos combined, duplicates skipped (re-import is harmless); local id/name/handle kept (empty handle filled); same name but clearly different face (best similarity < 0.5) → kept separate as "Name (2)" and reported; ≤ 30 photos per member; additive (deletions don't spread). Workflow: enroll on laptop, export, import on phone (and back). |
 | Lookalikes (twins) | Face model can't separate identical twins (unlinked, they fail the margin rule or get guessed). Members can be linked in the Roster ("Looks like", saved on both). Margin ignores lookalikes (still applies vs everyone else). Frame with all of them → each face a different twin (both tagged, so who-is-who doesn't matter). Fewer → amber "A or B?" catch stored under a group key; Inbox asks "It's A / It's B" before it can be shared or saved; skipped only if every twin is locked. Links carry over in roster merges. |
 | Locked members | Still recognized (so they can't be mistaken for someone else) but drawn gray with 🔒; no photos or alerts. |
@@ -322,7 +322,9 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-CAM-5 [M] Camera picker switches devices
 - [x] T-CAM-6 [U] `cameraErrorMessage` maps each error name to readable text
 - [x] T-CAM-7 [U] `zoomPlan`: camera zoom when supported, digital top-up/fallback
-- [ ] T-CAM-8 [M] iPhone: Zoom 2× uses camera zoom (log: `Zoom 2×: camera 2×`); preview zooms; range improves
+- [x] T-CAM-9 [U] `captureSize`: 4K only when zoomed
+- [x] T-CAM-10 [U] `describeCamera` text
+- [ ] T-CAM-8 [M] iPhone: Settings "In use" line at 1× and 2× (resolution delivered, max, zoom support): ____; lenses listed in Camera picker: ____; face-label range at 2× vs 1×: ____
 
 ### 7.6 `device.js`
 | Function | Purpose |
@@ -544,6 +546,7 @@ Each photo added for a member shows ✓ used or ✗ skipped:
 - [x] T-APP-24 Works offline after first load (Chromium: service worker + cached models). iPhone: Airplane Mode ✓
 - [x] T-APP-25 Locked member → gray "🔒 Name · sniped today" label, no new photo; Reset today restores catching
 - [x] T-APP-26 Zoom without camera zoom → digital: preview scales, face still recognized
+- [x] T-APP-29 Zooming in restarts camera at 4K; Settings shows delivered resolution; 1× returns to normal
 - [x] T-APP-27 Roster "Looks like" link saved on both members (also fixed: editing a member without thumbnails failed to save)
 - [x] T-APP-28 "Which one?" catch: not preselected, blocked from Share with a message, resolved by "It's Bob"
 - [ ] T-LOOK-6 [M] Real twins: link them; both in view → one catch each; one alone → "A or B?" in Inbox

@@ -47,6 +47,35 @@ export async function applyZoom(level) {
   }
 }
 
+// [pure] Resolution to ask for. When zoomed in, ask for 4K so a digital crop still has full detail
+// (2× of 4K = 1080p of real pixels); at 1× use the normal setting to save power. Browsers treat these as
+// "ideal" and deliver the closest they support.
+export function captureSize({ width, height, zoom }) {
+  return zoom > 1 ? { width: Math.max(width, 3840), height: Math.max(height, 2160) } : { width, height };
+}
+
+// What the browser actually delivered and can do, for the log and Settings.
+export function cameraInfo() {
+  const track = stream?.getVideoTracks()[0];
+  if (!track) return null;
+  const s = track.getSettings?.() ?? {};
+  const c = track.getCapabilities?.() ?? {};
+  return {
+    label: track.label || 'Camera',
+    width: s.width, height: s.height,
+    maxWidth: c.width?.max, maxHeight: c.height?.max,
+    zoom: c.zoom && c.zoom.max > c.zoom.min ? { min: c.zoom.min, max: c.zoom.max } : null,
+  };
+}
+
+// [pure] One-line description of cameraInfo().
+export function describeCamera(info) {
+  if (!info) return 'Camera not running';
+  const max = info.maxWidth ? ` (max ${info.maxWidth}×${info.maxHeight})` : '';
+  const zoom = info.zoom ? `camera zoom ${info.zoom.min}–${info.zoom.max}×` : 'no camera zoom (digital crop only)';
+  return `${info.label}: ${info.width}×${info.height}${max}; ${zoom}`;
+}
+
 export function isCameraLive() {
   return !!stream && stream.getVideoTracks().some((t) => t.readyState === 'live');
 }

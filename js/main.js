@@ -2,7 +2,7 @@
 
 import { loadSettings, saveSettings, validate, DEFAULTS } from './settings.js';
 import { initLog, log, toggleLog } from './log.js';
-import { startCamera, stopCamera, listCameras, cameraErrorMessage, applyZoom } from './camera.js';
+import { startCamera, stopCamera, listCameras, cameraErrorMessage, applyZoom, captureSize, cameraInfo, describeCamera } from './camera.js';
 import { keepAwake, unlockAudio, setDim, isDim, beep } from './device.js';
 import { initDetector, detect } from './detector.js';
 import { grabFrame } from './capture.js';
@@ -17,7 +17,7 @@ import { now } from './clock.js';
 import { parseGroupKey } from './lookalikes.js';
 import * as ui from './ui.js';
 
-export const VERSION = 'P6.3';
+export const VERSION = 'P6.4';
 
 const CLOCK_MS = 10_000;
 
@@ -168,7 +168,7 @@ async function loadDetector() {
 async function startWatch() {
   unlockAudio();
   try {
-    app.cam = await startCamera(video, app.settings);
+    app.cam = await startCamera(video, { ...app.settings, ...captureSize(app.settings) });
   } catch (err) {
     ui.toast(cameraErrorMessage(err), 6000);
     log(err, 'warn');
@@ -178,6 +178,7 @@ async function startWatch() {
   await setZoom();
   app.awake = await keepAwake(true);
   log(`Camera ${app.cam.width}×${app.cam.height}; keep-awake: ${app.awake}`);
+  log(describeCamera(cameraInfo()));
   await app.mode.start(ctx);
   setState('WATCHING');
   startLoop();
@@ -276,7 +277,10 @@ function onSettingChange(key, value) {
     log(`Camera setting ${key} changed; restarting camera`);
     startWatch();
   } else if (app.state === 'WATCHING' && key === 'zoom') {
-    setZoom();
+    // Crossing 1× changes the resolution to ask for (4K when zoomed), which needs a camera restart.
+    const size = (z) => captureSize({ ...app.settings, zoom: z });
+    if (size(prev.zoom).width !== size(app.settings.zoom).width) startWatch();
+    else setZoom();
   }
 }
 
@@ -284,6 +288,9 @@ async function openSettings() {
   let cameras = [];
   try { cameras = await listCameras(); } catch (err) { log(err, 'warn'); }
   ui.renderSettings(app.settings, onSettingChange, { cameras });
+  const info = cameraInfo(); // read live, so it reflects a restart that just happened
+  document.getElementById('camera-info').textContent = info
+    ? `In use: ${describeCamera(info)}` : 'Start watching to see what this camera supports.';
   renderRehearsals();
   ui.showView('settings');
 }
